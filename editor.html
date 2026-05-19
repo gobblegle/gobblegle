@@ -49,6 +49,17 @@
         }
         .card-title { font-size: 1rem; font-weight: 700; color: var(--text); }
 
+        .field-label {
+            font-size: 0.82rem; font-weight: 600; color: var(--text-muted);
+            display: block; margin-bottom: 5px;
+        }
+        .field-input {
+            width: 100%; padding: 9px 11px; border: 1.5px solid var(--border);
+            border-radius: 8px; font-size: 0.9rem; background: var(--bg);
+            color: var(--text); outline: none; font-family: inherit;
+        }
+        .field-input:focus { border-color: var(--primary); }
+
         .dim-controls { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
         .dim-ctrl { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; }
         .dim-val { min-width: 22px; text-align: center; font-size: 1rem; font-weight: 700; color: var(--text); }
@@ -59,7 +70,8 @@
         }
         .dim-btn:hover { background: var(--cell-active); }
 
-        .hint { font-size: 0.8rem; color: var(--text-muted); }
+        .hint { font-size: 0.8rem; color: var(--text-muted); line-height: 1.5; }
+        .hint a { color: var(--primary); }
 
         .table-wrap { overflow-x: auto; }
         .editor-table { border-collapse: collapse; margin: 0 auto; }
@@ -79,6 +91,7 @@
             font-size: 0.9rem; cursor: pointer; transition: background 0.2s;
         }
         .btn:hover { background: var(--primary-hover); }
+        .btn:disabled { opacity: 0.6; cursor: default; }
         .btn-sec {
             background: transparent; color: var(--text-muted);
             border: 1px solid var(--border);
@@ -87,17 +100,18 @@
 
         .status {
             font-size: 0.85rem; font-weight: 600; padding: 8px 12px;
-            border-radius: 8px; display: none;
+            border-radius: 8px; display: none; line-height: 1.4;
         }
-        .status.ok  { background: #dcfce7; color: #166534; display: block; }
-        .status.err { background: #fee2e2; color: #991b1b; display: block; }
+        .status.ok   { background: #dcfce7; color: #166534; display: block; }
+        .status.err  { background: #fee2e2; color: #991b1b; display: block; }
+        .status.info { background: var(--cell-active); color: var(--primary); display: block; }
 
-        .instructions {
-            font-size: 0.82rem; color: var(--text-muted); line-height: 1.6;
+        .gh-saved-indicator {
+            font-size: 0.78rem; font-weight: 600; color: #166534;
+            background: #dcfce7; border-radius: 6px; padding: 2px 8px;
+            display: none;
         }
-        .instructions b { color: var(--text); }
-        .instructions ol { padding-left: 18px; margin-top: 6px; }
-        .instructions li { margin-bottom: 4px; }
+        .gh-saved-indicator.visible { display: inline-block; }
     </style>
 </head>
 <body>
@@ -113,7 +127,29 @@
 <div class="page">
 
     <div class="card">
-        <div class="card-title">Grid Size</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <div class="card-title">GitHub Settings</div>
+            <span class="gh-saved-indicator" id="gh-saved">Saved</span>
+        </div>
+        <div>
+            <label class="field-label" for="gh-repo">Repository (owner/repo-name)</label>
+            <input class="field-input" type="text" id="gh-repo" placeholder="e.g. tom/gobblegle" autocomplete="off" spellcheck="false">
+        </div>
+        <div>
+            <label class="field-label" for="gh-token">Personal Access Token</label>
+            <input class="field-input" type="password" id="gh-token" placeholder="ghp_…" autocomplete="off" spellcheck="false">
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <p class="hint">
+                Token needs <b>Contents: Read &amp; Write</b>.<br>
+                GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens.
+            </p>
+            <button class="btn" onclick="saveGhSettings()">Save</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Grid</div>
         <div class="dim-controls">
             <div class="dim-ctrl">
                 Rows
@@ -135,19 +171,8 @@
         <div class="status" id="status"></div>
         <div class="actions">
             <button class="btn btn-sec" onclick="clearAll()">Clear</button>
-            <button class="btn" onclick="saveBoard()">Download board-config.json</button>
+            <button class="btn" id="push-btn" onclick="pushBoard()">Push to GitHub</button>
         </div>
-    </div>
-
-    <div class="card instructions">
-        <div class="card-title">How to publish a new board</div>
-        <ol>
-            <li>Fill in the letters above.</li>
-            <li>Click <b>Download board-config.json</b>.</li>
-            <li>Replace the <b>board-config.json</b> file in your GitHub repo with the downloaded one.</li>
-            <li>Commit and push — the live game updates automatically.</li>
-        </ol>
-        <p style="margin-top:8px">Players' progress resets automatically whenever the board changes.</p>
     </div>
 
 </div>
@@ -156,6 +181,7 @@
 let editorRows = 5, editorCols = 5;
 
 window.addEventListener('DOMContentLoaded', async () => {
+    loadGhSettings();
     try {
         const res = await fetch('./board-config.json');
         if (res.ok) {
@@ -169,6 +195,83 @@ window.addEventListener('DOMContentLoaded', async () => {
     buildEditorTable(false, null);
 });
 
+// ── GitHub Settings ────────────────────────────────────────────────────────
+function loadGhSettings() {
+    const repo  = localStorage.getItem('gh_repo')  || '';
+    const token = localStorage.getItem('gh_token') || '';
+    document.getElementById('gh-repo').value  = repo;
+    document.getElementById('gh-token').value = token;
+    if (repo && token) document.getElementById('gh-saved').classList.add('visible');
+}
+
+function saveGhSettings() {
+    const repo  = document.getElementById('gh-repo').value.trim();
+    const token = document.getElementById('gh-token').value.trim();
+    if (!repo || !token) { alert('Please enter both the repo and token.'); return; }
+    localStorage.setItem('gh_repo',  repo);
+    localStorage.setItem('gh_token', token);
+    const ind = document.getElementById('gh-saved');
+    ind.classList.add('visible');
+    ind.textContent = 'Saved ✓';
+    setTimeout(() => { ind.textContent = 'Saved'; }, 2000);
+}
+
+// ── Push to GitHub ─────────────────────────────────────────────────────────
+async function pushBoard() {
+    const { cells, hasAny } = readCells();
+    if (!hasAny) { showStatus('Please enter at least one letter.', 'err'); return; }
+    if (!isConnected(cells, editorRows, editorCols)) {
+        showStatus('Letters are not all connected — every cell must touch at least one other.', 'err');
+        return;
+    }
+
+    const repo  = localStorage.getItem('gh_repo')  || '';
+    const token = localStorage.getItem('gh_token') || '';
+    if (!repo || !token) {
+        showStatus('Save your GitHub repo and token in the settings above first.', 'err');
+        return;
+    }
+
+    const config  = { rows: editorRows, cols: editorCols, cells };
+    const content = btoa(JSON.stringify(config, null, 2));
+    const apiUrl  = `https://api.github.com/repos/${repo}/contents/board-config.json`;
+    const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+    };
+
+    const btn = document.getElementById('push-btn');
+    btn.disabled = true;
+    showStatus('Pushing to GitHub…', 'info');
+
+    let sha = null;
+    try {
+        const getRes = await fetch(apiUrl, { headers });
+        if (getRes.ok) sha = (await getRes.json()).sha;
+        else if (getRes.status !== 404) throw new Error(`${getRes.status}`);
+    } catch (e) {
+        btn.disabled = false;
+        showStatus(`Could not reach GitHub. Check your repo name and token. (${e.message})`, 'err');
+        return;
+    }
+
+    try {
+        const body = { message: 'Update board config', content, ...(sha ? { sha } : {}) };
+        const putRes = await fetch(apiUrl, { method: 'PUT', headers, body: JSON.stringify(body) });
+        if (putRes.ok) {
+            showStatus('Board pushed! The live game will update in about a minute.', 'ok');
+        } else {
+            const err = await putRes.json().catch(() => ({}));
+            showStatus(`GitHub error: ${err.message || putRes.status}`, 'err');
+        }
+    } catch (e) {
+        showStatus('Push failed. Check your connection.', 'err');
+    }
+    btn.disabled = false;
+}
+
+// ── Editor Table ───────────────────────────────────────────────────────────
 function buildEditorTable(keepExisting, prefill) {
     document.getElementById('ed-rows').textContent = editorRows;
     document.getElementById('ed-cols').textContent = editorCols;
@@ -272,28 +375,10 @@ function isConnected(cells, rows, cols) {
     return visited.size === lc.length;
 }
 
-function saveBoard() {
-    const { cells, hasAny } = readCells();
-    if (!hasAny) { showStatus('Please enter at least one letter.', false); return; }
-    if (!isConnected(cells, editorRows, editorCols)) {
-        showStatus('Letters are not all connected — every cell must touch at least one other.', false);
-        return;
-    }
-
-    const config = { rows: editorRows, cols: editorCols, cells };
-    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href = url; a.download = 'board-config.json';
-    a.click();
-    URL.revokeObjectURL(url);
-    showStatus('Downloaded! Replace board-config.json in your GitHub repo and push.', true);
-}
-
-function showStatus(msg, ok) {
+function showStatus(msg, type) {
     const el = document.getElementById('status');
     el.textContent = msg;
-    el.className = 'status ' + (ok ? 'ok' : 'err');
+    el.className = 'status ' + type;
 }
 function clearStatus() {
     document.getElementById('status').className = 'status';
