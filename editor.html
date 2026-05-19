@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gobblegle — Board Editor</title>
+    <style>
+        :root {
+            --primary: #c2410c;
+            --primary-hover: #9a3412;
+            --bg: #fdf8f4;
+            --surface: #ffffff;
+            --text: #1c0a00;
+            --text-muted: #78614f;
+            --border: #e8d5c4;
+            --cell-active: #ffedd5;
+            --cell-border-active: #fb923c;
+            --error: #c9605a;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg); color: var(--text);
+            min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+        }
+        header {
+            width: 100%; max-width: 540px; padding: 14px 16px;
+            display: flex; justify-content: center; align-items: center; gap: 12px;
+            border-bottom: 1px solid var(--border); background: var(--surface);
+        }
+        .header-title { display: flex; align-items: center; gap: 8px; }
+        .header-title img { height: 38px; width: auto; display: block; }
+        .editor-badge {
+            font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.08em; color: var(--primary);
+            background: var(--cell-active); border: 1px solid var(--cell-border-active);
+            padding: 3px 8px; border-radius: 6px;
+        }
+
+        .page {
+            width: 100%; max-width: 540px; padding: 24px 16px;
+            display: flex; flex-direction: column; gap: 20px;
+        }
+
+        .card {
+            background: var(--surface); border-radius: 14px; padding: 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+            display: flex; flex-direction: column; gap: 14px;
+        }
+        .card-title { font-size: 1rem; font-weight: 700; color: var(--text); }
+
+        .dim-controls { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+        .dim-ctrl { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; }
+        .dim-val { min-width: 22px; text-align: center; font-size: 1rem; font-weight: 700; color: var(--text); }
+        .dim-btn {
+            width: 28px; height: 28px; border: 1px solid var(--border);
+            border-radius: 6px; background: var(--bg); font-size: 1.1rem;
+            font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;
+        }
+        .dim-btn:hover { background: var(--cell-active); }
+
+        .hint { font-size: 0.8rem; color: var(--text-muted); }
+
+        .table-wrap { overflow-x: auto; }
+        .editor-table { border-collapse: collapse; margin: 0 auto; }
+        .editor-table td { padding: 3px; }
+        .editor-table input {
+            width: 46px; height: 46px; border: 2px solid var(--border);
+            border-radius: 8px; font-size: 1.3rem; font-weight: 700;
+            text-align: center; text-transform: uppercase;
+            background: var(--bg); color: var(--text); outline: none;
+        }
+        .editor-table input:focus { border-color: var(--primary); background: var(--cell-active); }
+
+        .actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+        .btn {
+            background: var(--primary); color: #fff; border: none;
+            padding: 10px 20px; border-radius: 8px; font-weight: 600;
+            font-size: 0.9rem; cursor: pointer; transition: background 0.2s;
+        }
+        .btn:hover { background: var(--primary-hover); }
+        .btn-sec {
+            background: transparent; color: var(--text-muted);
+            border: 1px solid var(--border);
+        }
+        .btn-sec:hover { background: var(--bg); color: var(--text); }
+
+        .status {
+            font-size: 0.85rem; font-weight: 600; padding: 8px 12px;
+            border-radius: 8px; display: none;
+        }
+        .status.ok  { background: #dcfce7; color: #166534; display: block; }
+        .status.err { background: #fee2e2; color: #991b1b; display: block; }
+
+        .instructions {
+            font-size: 0.82rem; color: var(--text-muted); line-height: 1.6;
+        }
+        .instructions b { color: var(--text); }
+        .instructions ol { padding-left: 18px; margin-top: 6px; }
+        .instructions li { margin-bottom: 4px; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="header-title">
+        <img src="gobblegleturkey.png" alt="">
+        <img src="gobblegletitle.png" alt="Gobblegle">
+    </div>
+    <span class="editor-badge">Board Editor</span>
+</header>
+
+<div class="page">
+
+    <div class="card">
+        <div class="card-title">Grid Size</div>
+        <div class="dim-controls">
+            <div class="dim-ctrl">
+                Rows
+                <button class="dim-btn" onclick="adjustDim('rows',-1)">−</button>
+                <span class="dim-val" id="ed-rows">5</span>
+                <button class="dim-btn" onclick="adjustDim('rows',1)">+</button>
+            </div>
+            <div class="dim-ctrl">
+                Cols
+                <button class="dim-btn" onclick="adjustDim('cols',-1)">−</button>
+                <span class="dim-val" id="ed-cols">5</span>
+                <button class="dim-btn" onclick="adjustDim('cols',1)">+</button>
+            </div>
+        </div>
+        <div class="hint">Leave cells blank to create gaps. All letter cells must be connected (including diagonals).</div>
+        <div class="table-wrap">
+            <table class="editor-table" id="editor-table"></table>
+        </div>
+        <div class="status" id="status"></div>
+        <div class="actions">
+            <button class="btn btn-sec" onclick="clearAll()">Clear</button>
+            <button class="btn" onclick="saveBoard()">Download board-config.json</button>
+        </div>
+    </div>
+
+    <div class="card instructions">
+        <div class="card-title">How to publish a new board</div>
+        <ol>
+            <li>Fill in the letters above.</li>
+            <li>Click <b>Download board-config.json</b>.</li>
+            <li>Replace the <b>board-config.json</b> file in your GitHub repo with the downloaded one.</li>
+            <li>Commit and push — the live game updates automatically.</li>
+        </ol>
+        <p style="margin-top:8px">Players' progress resets automatically whenever the board changes.</p>
+    </div>
+
+</div>
+
+<script>
+let editorRows = 5, editorCols = 5;
+
+window.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const res = await fetch('./board-config.json');
+        if (res.ok) {
+            const cfg = await res.json();
+            editorRows = cfg.rows;
+            editorCols = cfg.cols;
+            buildEditorTable(false, cfg.cells);
+            return;
+        }
+    } catch {}
+    buildEditorTable(false, null);
+});
+
+function buildEditorTable(keepExisting, prefill) {
+    document.getElementById('ed-rows').textContent = editorRows;
+    document.getElementById('ed-cols').textContent = editorCols;
+
+    const table = document.getElementById('editor-table');
+    const prev = {};
+    if (keepExisting) {
+        table.querySelectorAll('input').forEach(inp =>
+            prev[`${inp.dataset.r},${inp.dataset.c}`] = inp.value);
+    }
+    table.innerHTML = '';
+
+    for (let r = 0; r < editorRows; r++) {
+        const tr = document.createElement('tr');
+        for (let c = 0; c < editorCols; c++) {
+            const td = document.createElement('td');
+            const inp = document.createElement('input');
+            inp.type = 'text'; inp.maxLength = 1;
+            inp.dataset.r = r; inp.dataset.c = c;
+            inp.autocomplete = 'off'; inp.spellcheck = false;
+
+            if (keepExisting && prev[`${r},${c}`] !== undefined) {
+                inp.value = prev[`${r},${c}`];
+            } else if (prefill && prefill[r]?.[c]) {
+                inp.value = prefill[r][c];
+            }
+
+            inp.addEventListener('input', () => {
+                inp.value = inp.value.slice(-1).toUpperCase();
+                clearStatus();
+                if (inp.value) {
+                    const next = table.querySelector(`input[data-r="${r}"][data-c="${c+1}"]`)
+                              || table.querySelector(`input[data-r="${r+1}"][data-c="0"]`);
+                    next?.focus();
+                }
+            });
+            inp.addEventListener('keydown', ev => {
+                if (ev.key === 'Backspace' && !inp.value) {
+                    const p = table.querySelector(`input[data-r="${r}"][data-c="${c-1}"]`)
+                            || table.querySelector(`input[data-r="${r-1}"][data-c="${editorCols-1}"]`);
+                    p?.focus();
+                }
+            });
+
+            td.appendChild(inp);
+            tr.appendChild(td);
+        }
+        table.appendChild(tr);
+    }
+}
+
+function adjustDim(dim, delta) {
+    if (dim === 'rows') editorRows = Math.max(1, Math.min(10, editorRows + delta));
+    else                editorCols = Math.max(1, Math.min(10, editorCols + delta));
+    buildEditorTable(true, null);
+}
+
+function clearAll() {
+    document.getElementById('editor-table').querySelectorAll('input')
+        .forEach(inp => inp.value = '');
+    clearStatus();
+}
+
+function readCells() {
+    const table = document.getElementById('editor-table');
+    const cells = [];
+    let hasAny = false;
+    for (let r = 0; r < editorRows; r++) {
+        cells[r] = [];
+        for (let c = 0; c < editorCols; c++) {
+            const inp = table.querySelector(`input[data-r="${r}"][data-c="${c}"]`);
+            const v = inp ? inp.value.trim().toUpperCase() : '';
+            cells[r][c] = /^[A-Z]$/.test(v) ? v : null;
+            if (cells[r][c]) hasAny = true;
+        }
+    }
+    return { cells, hasAny };
+}
+
+function isConnected(cells, rows, cols) {
+    const lc = [];
+    for (let r = 0; r < rows; r++)
+        for (let c = 0; c < cols; c++)
+            if (cells[r]?.[c]) lc.push([r, c]);
+    if (lc.length <= 1) return lc.length === 1;
+    const visited = new Set();
+    const key = (r, c) => `${r},${c}`;
+    const queue = [lc[0]];
+    visited.add(key(...lc[0]));
+    while (queue.length) {
+        const [r, c] = queue.shift();
+        for (let dr = -1; dr <= 1; dr++)
+            for (let dc = -1; dc <= 1; dc++) {
+                if (!dr && !dc) continue;
+                const nr = r+dr, nc = c+dc;
+                if (nr<0||nr>=rows||nc<0||nc>=cols||!cells[nr]?.[nc]) continue;
+                const k = key(nr, nc);
+                if (!visited.has(k)) { visited.add(k); queue.push([nr, nc]); }
+            }
+    }
+    return visited.size === lc.length;
+}
+
+function saveBoard() {
+    const { cells, hasAny } = readCells();
+    if (!hasAny) { showStatus('Please enter at least one letter.', false); return; }
+    if (!isConnected(cells, editorRows, editorCols)) {
+        showStatus('Letters are not all connected — every cell must touch at least one other.', false);
+        return;
+    }
+
+    const config = { rows: editorRows, cols: editorCols, cells };
+    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = 'board-config.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    showStatus('Downloaded! Replace board-config.json in your GitHub repo and push.', true);
+}
+
+function showStatus(msg, ok) {
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = 'status ' + (ok ? 'ok' : 'err');
+}
+function clearStatus() {
+    document.getElementById('status').className = 'status';
+}
+</script>
+</body>
+</html>
