@@ -568,7 +568,7 @@ function updateCellSize() {
     const cellFromH = (availH - (boardRows - 1) * gap) / boardRows;
     const cellFromW = (availW - (boardCols - 1) * gap) / boardCols;
     const cellSize  = Math.max(32, Math.floor(Math.min(cellFromH, cellFromW)));
-    const fontSize  = Math.max(0.8, cellSize / 24);
+    const fontSize  = Math.max(0.8, cellSize / 29);
 
     document.documentElement.style.setProperty('--cell-size', `${cellSize}px`);
     document.documentElement.style.setProperty('--cell-font', `${fontSize}rem`);
