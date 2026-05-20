@@ -200,6 +200,23 @@
         .score-name { font-weight: 700; font-size: 0.95rem; }
         .score-gp   { font-weight: 800; color: var(--primary); font-size: 0.95rem; text-align: right; min-width: 48px; }
         .score-rnd  { color: var(--text-muted); font-weight: 600; font-size: 0.82rem; text-align: right; min-width: 52px; }
+
+        /* ── Scroll picker ── */
+        .picker-outer { position: relative; height: 120px; overflow: hidden; border: 1.5px solid var(--border); border-radius: 10px; background: var(--bg); }
+        .picker-scroller { height: 100%; overflow-y: scroll; scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+        .picker-scroller::-webkit-scrollbar { display: none; }
+        .picker-item { height: 40px; scroll-snap-align: center; display: flex; align-items: center; justify-content: center; font-size: 1rem; font-weight: 600; color: var(--text-muted); }
+        .picker-pad  { height: 40px; flex-shrink: 0; }
+        .picker-highlight { position: absolute; top: 40px; height: 40px; left: 0; right: 0; border-top: 2px solid var(--cell-border-active); border-bottom: 2px solid var(--cell-border-active); pointer-events: none; background: rgba(251,146,60,0.1); }
+
+        /* ── Ready button ── */
+        .btn-green { background: #16a34a; }
+        .btn-green:hover { background: #15803d; }
+
+        /* ── Player ready badge ── */
+        .ready-badge { margin-left: auto; font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 5px; }
+        .ready-badge.yes { background: #dcfce7; color: #16a34a; }
+        .ready-badge.no  { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); }
     </style>
 </head>
 <body>
@@ -273,22 +290,32 @@
             <div class="setting-row">
                 <span class="setting-label">Board Size</span>
                 <div class="size-tabs">
-                    <button class="size-tab" data-size="3" onclick="setRoomSetting('size',3)">3×3</button>
-                    <button class="size-tab active" data-size="4" onclick="setRoomSetting('size',4)">4×4</button>
-                    <button class="size-tab" data-size="5" onclick="setRoomSetting('size',5)">5×5</button>
+                    <button class="size-tab" data-r="3" data-c="3" onclick="setRoomSize(3,3)">3×3</button>
+                    <button class="size-tab active" data-r="4" data-c="4" onclick="setRoomSize(4,4)">4×4</button>
+                    <button class="size-tab" data-r="5" data-c="5" onclick="setRoomSize(5,5)">5×5</button>
+                    <button class="size-tab" data-r="0" data-c="0" onclick="setRoomSizeCustom()">Custom</button>
+                </div>
+            </div>
+            <div class="setting-row" id="custom-size-row" style="display:none">
+                <span class="setting-label">Rows × Cols</span>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <input class="minutes-input" type="number" id="custom-rows" min="2" max="10" value="5"
+                           onchange="setRoomSize(parseInt(this.value)||5,parseInt(document.getElementById('custom-cols').value)||5)">
+                    <span class="hint">×</span>
+                    <input class="minutes-input" type="number" id="custom-cols" min="2" max="10" value="5"
+                           onchange="setRoomSize(parseInt(document.getElementById('custom-rows').value)||5,parseInt(this.value)||5)">
                 </div>
             </div>
             <div class="setting-row">
                 <span class="setting-label">Time Limit</span>
-                <div class="minutes-wrap">
-                    <input class="minutes-input" type="number" id="minutes-input" min="1" max="99" value="3"
-                           onchange="setRoomSetting('minutes', Math.min(99,Math.max(1,parseInt(this.value)||3)))">
-                    <span class="hint" style="font-size:0.85rem">min</span>
+                <div class="picker-outer" style="width:120px">
+                    <div class="picker-scroller" id="minutes-picker"></div>
+                    <div class="picker-highlight"></div>
                 </div>
             </div>
         </div>
 
-        <button class="btn btn-full" id="start-game-btn" onclick="startRoomGame()" disabled>Start Game</button>
+        <button class="btn btn-full" id="ready-btn" onclick="toggleReady()" disabled>I'm Ready</button>
     </div>
 
     <!-- Scoreboard -->
@@ -357,14 +384,14 @@ function mulberry32(seed) {
     };
 }
 
-function generateBoard(size, rndFn) {
+function generateBoard(rows, cols, rndFn) {
     const cells = [];
-    for (let r = 0; r < size; r++) {
+    for (let r = 0; r < rows; r++) {
         cells[r] = [];
-        for (let c = 0; c < size; c++)
+        for (let c = 0; c < cols; c++)
             cells[r][c] = LETTER_POOL[Math.floor(rndFn() * LETTER_POOL.length)];
     }
-    return { rows: size, cols: size, cells };
+    return { rows, cols, cells };
 }
 
 function generateRoomId() {
@@ -412,7 +439,7 @@ async function loadBoardConfig() {
         const cfg = await res.json();
         boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
     } catch {
-        const b = generateBoard(3, Math.random);
+        const b = generateBoard(3, 3, Math.random);
         boardRows = b.rows; boardCols = b.cols; boardCells = b.cells;
     }
 }
@@ -656,22 +683,21 @@ function updateScoreUI() {
     document.getElementById('score-btn').textContent = `Found: ${foundWords.size} / ${validWords.size}`;
 }
 function updateRoomScoreUI() {
-    const sc = totalScore(roomFoundWords);
-    document.getElementById('score-btn').textContent = `${roomFoundWords.size} words · ${sc} pts`;
+    document.getElementById('score-btn').textContent = `Found: ${roomFoundWords.size} / ${validWords.size}`;
 }
 
-// ── Word popup (solo only) ─────────────────────────────────────────────────
+// ── Word popup ─────────────────────────────────────────────────────────────
 function togglePopup(e) {
-    if (roomMode) return;
     e.stopPropagation();
     const popup = document.getElementById('word-popup');
     if (popup.style.display !== 'none') { popup.style.display='none'; return; }
 
-    const groups = {};
+    const myWords = roomMode ? roomFoundWords : foundWords;
+    const groups  = {};
     for (const w of validWords) {
         if (!groups[w.length]) groups[w.length]={total:0,found:0};
         groups[w.length].total++;
-        if (foundWords.has(w)) groups[w.length].found++;
+        if (myWords.has(w)) groups[w.length].found++;
     }
     popup.innerHTML='';
     const keys = Object.keys(groups).sort((a,b)=>a-b);
@@ -684,7 +710,7 @@ function togglePopup(e) {
             const row=document.createElement('div'); row.className='popup-row';
             row.innerHTML=`<span class="popup-label">${len}-letter words</span><span class="popup-count">${fc} / ${total}</span>`;
             sec.appendChild(row);
-            const wf=[...validWords].filter(w=>w.length===parseInt(len)&&foundWords.has(w)).sort();
+            const wf=[...validWords].filter(w=>w.length===parseInt(len)&&myWords.has(w)).sort();
             if (wf.length) {
                 const wl=document.createElement('div'); wl.className='popup-words';
                 wf.forEach(w=>{const chip=document.createElement('span');chip.className='popup-chip';chip.textContent=w;wl.appendChild(chip);});
@@ -693,9 +719,11 @@ function togglePopup(e) {
             popup.appendChild(sec);
         });
     }
-    const rb=document.createElement('button'); rb.className='popup-reset'; rb.textContent='Reset Progress';
-    rb.onclick=()=>{resetProgress();popup.style.display='none';};
-    popup.appendChild(rb);
+    if (!roomMode) {
+        const rb=document.createElement('button'); rb.className='popup-reset'; rb.textContent='Reset Progress';
+        rb.onclick=()=>{resetProgress();popup.style.display='none';};
+        popup.appendChild(rb);
+    }
     popup.style.display='block';
 }
 
@@ -738,7 +766,7 @@ async function createRoom() {
     playerId  = getPlayerId();
     roomId    = generateRoomId();
     roomRef   = db.ref(`rooms/${roomId}`);
-    await roomRef.set({ created: Date.now(), state: 'lobby', settings: { size: 4, minutes: 3 }, currentRound: -1 });
+    await roomRef.set({ created: Date.now(), state: 'lobby', settings: { rows: 4, cols: 4, minutes: 3 }, currentRound: -1 });
     history.pushState({}, '', `?room=${roomId}`);
     await initRoomMode(roomId);
 }
@@ -780,6 +808,12 @@ function handleRoomUpdate(data) {
         scoreBoardShown = false;
         showPanel('lobby');
         renderLobby(data);
+        // Auto-start when all players are ready (host triggers)
+        const players = data.players || {};
+        const arr = Object.entries(players).sort((a,b)=>(a[1].joined||0)-(b[1].joined||0));
+        if (arr.length > 0 && arr.every(([,p])=>p.ready) && arr[0][0] === playerId) {
+            autoStartGame(data);
+        }
     } else if (data.state === 'playing') {
         if (!roomPlayingInitialized) renderRoomPlaying(data);
     } else if (data.state === 'finished') {
@@ -794,9 +828,14 @@ function renderLobby(data) {
     const players   = data.players || {};
     const playerArr = Object.entries(players).sort((a,b)=>(a[1].joined||0)-(b[1].joined||0));
     const hasJoined = !!players[playerId];
+    const myReady   = players[playerId]?.ready || false;
 
     document.getElementById('name-entry-card').style.display = hasJoined ? 'none' : '';
-    document.getElementById('start-game-btn').disabled = playerArr.length === 0;
+
+    const readyBtn = document.getElementById('ready-btn');
+    readyBtn.disabled = !hasJoined;
+    readyBtn.textContent = myReady ? 'Ready ✓' : "I'm Ready";
+    readyBtn.className = 'btn btn-full' + (myReady ? ' btn-green' : '');
 
     const pl = document.getElementById('player-list');
     pl.innerHTML = '';
@@ -806,14 +845,24 @@ function renderLobby(data) {
         playerArr.forEach(([pid,p],i) => {
             const el=document.createElement('div');
             el.className='player-item'+(pid===playerId?' me':'');
-            el.innerHTML=`<span class="player-dot"></span>${p.name}${i===0?' <span style="font-size:.75rem;color:var(--text-muted);font-weight:400">(host)</span>':''}`;
+            const hostTag = i===0 ? ' <span style="font-size:.75rem;color:var(--text-muted);font-weight:400">(host)</span>' : '';
+            const badge = `<span class="ready-badge ${p.ready?'yes':'no'}">${p.ready?'Ready':'Waiting'}</span>`;
+            el.innerHTML=`<span class="player-dot"></span>${p.name}${hostTag}${badge}`;
             pl.appendChild(el);
         });
     }
 
-    const s = data.settings || {size:4,minutes:3};
-    document.querySelectorAll('.size-tab').forEach(btn=>btn.classList.toggle('active',parseInt(btn.dataset.size)===s.size));
-    document.getElementById('minutes-input').value = s.minutes;
+    const s = data.settings || {rows:4,cols:4,minutes:3};
+    const rows = s.rows || s.size || 4;
+    const cols = s.cols || s.size || 4;
+    const isCustom = !([3,4,5].includes(rows) && rows === cols);
+    document.querySelectorAll('.size-tab').forEach(btn => {
+        const br=parseInt(btn.dataset.r), bc=parseInt(btn.dataset.c);
+        btn.classList.toggle('active', br===0 ? isCustom : br===rows && bc===cols);
+    });
+    document.getElementById('custom-size-row').style.display = isCustom ? '' : 'none';
+    if (isCustom) { document.getElementById('custom-rows').value=rows; document.getElementById('custom-cols').value=cols; }
+    initMinutesPicker(s.minutes || 3);
 }
 
 async function joinLobby() {
@@ -821,26 +870,74 @@ async function joinLobby() {
     const name = inp.value.trim();
     if (!name) { inp.focus(); return; }
     localStorage.setItem('gob_name', name);
-    await roomRef.child(`players/${playerId}`).set({ name, gamePoints: 0, joined: Date.now() });
+    await roomRef.child(`players/${playerId}`).set({ name, gamePoints: 0, joined: Date.now(), ready: false });
     document.getElementById('name-entry-card').style.display = 'none';
+}
+
+async function toggleReady() {
+    const snap = await roomRef.child(`players/${playerId}`).once('value');
+    const p = snap.val();
+    if (!p) return;
+    await roomRef.child(`players/${playerId}/ready`).set(!p.ready);
 }
 
 async function setRoomSetting(field, val) {
     await roomRef.child(`settings/${field}`).set(val);
 }
 
+async function setRoomSize(rows, cols) {
+    await roomRef.child('settings').update({ rows, cols });
+}
+
+function setRoomSizeCustom() {
+    document.getElementById('custom-size-row').style.display = '';
+    document.querySelectorAll('.size-tab').forEach(btn=>btn.classList.toggle('active', btn.dataset.r==='0'));
+    const r=parseInt(document.getElementById('custom-rows').value)||5;
+    const c=parseInt(document.getElementById('custom-cols').value)||5;
+    setRoomSize(r, c);
+}
+
+function initMinutesPicker(initialValue) {
+    const scroller = document.getElementById('minutes-picker');
+    if (!scroller._built) {
+        scroller._built = true;
+        const pad1=document.createElement('div'); pad1.className='picker-pad'; scroller.appendChild(pad1);
+        for (let i=1;i<=99;i++) {
+            const item=document.createElement('div'); item.className='picker-item';
+            item.textContent=`${i} min`; item.dataset.value=i; scroller.appendChild(item);
+        }
+        const pad2=document.createElement('div'); pad2.className='picker-pad'; scroller.appendChild(pad2);
+        let t;
+        scroller.addEventListener('scroll', () => {
+            clearTimeout(t);
+            t = setTimeout(() => {
+                const val=Math.min(99,Math.max(1,Math.round(scroller.scrollTop/40)+1));
+                setRoomSetting('minutes', val);
+            }, 150);
+        }, {passive:true});
+    }
+    requestAnimationFrame(() => { scroller.scrollTop = (initialValue-1)*40; });
+}
+
 // ── Game start ─────────────────────────────────────────────────────────────
-async function startRoomGame() {
-    const snap     = await roomRef.once('value');
-    const data     = snap.val();
-    const settings = data.settings || {size:4,minutes:3};
-    const nextRound= (data.currentRound ?? -1) + 1;
-    const board    = generateBoard(settings.size, Math.random);
-    await roomRef.update({ state:'playing', board, startedAt: Date.now(), currentRound: nextRound });
+async function autoStartGame(data) {
+    roomRef.child('state').transaction(cur => cur==='lobby' ? 'playing' : undefined,
+        async (err, committed) => {
+            if (!committed) return;
+            const snap = await roomRef.once('value');
+            const d = snap.val();
+            const s = d.settings || {rows:4,cols:4,minutes:3};
+            const rows = s.rows || s.size || 4;
+            const cols = s.cols || s.size || 4;
+            const nextRound = (d.currentRound ?? -1) + 1;
+            await roomRef.update({ board: generateBoard(rows, cols, Math.random), startedAt: Date.now(), currentRound: nextRound });
+        }
+    );
 }
 
 function renderRoomPlaying(data) {
     if (roomPlayingInitialized) return;
+    if (!data.board) return;
     roomPlayingInitialized = true;
 
     showPanel('game');
