@@ -177,7 +177,7 @@
         /* ── Settings ── */
         .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         .setting-label { font-size: 0.88rem; font-weight: 600; color: var(--text-muted); flex-shrink: 0; }
-        .size-tabs { display: flex; gap: 6px; }
+        .size-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
         .size-tab { padding: 6px 13px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--bg); font-weight: 600; font-size: 0.85rem; cursor: pointer; font-family: inherit; }
         .size-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
         .size-tab:hover:not(.active) { background: var(--cell-active); }
@@ -339,6 +339,7 @@
                     <button class="size-tab active" data-r="4" data-c="4" onclick="setRoomSize(4,4)">4×4</button>
                     <button class="size-tab" data-r="5" data-c="5" onclick="setRoomSize(5,5)">5×5</button>
                     <button class="size-tab" data-r="0" data-c="0" onclick="setRoomSizeCustom()">Custom</button>
+                    <button class="size-tab" data-r="-1" data-c="-1" onclick="setRoomSizeRandom()">Random</button>
                 </div>
             </div>
             <div class="setting-row" id="custom-size-row" style="display:none">
@@ -415,7 +416,7 @@ let timerStarted = false, timerSeconds = 0, timerInterval = null;
 // Room state
 let roomMode = false, roomId = null, playerId = null;
 let roomFoundWords = new Set(), roomRef = null;
-let roomCurrentRound = 0, roomScoreSubmitted = false;
+let roomCurrentRound = 0, roomLastPlayedRound = -1, roomScoreSubmitted = false;
 let roomPlayingInitialized = false, scoreBoardShown = false;
 let roomCountdownInterval = null;
 
@@ -437,6 +438,191 @@ function generateBoard(rows, cols, rndFn) {
             cells[r][c] = LETTER_POOL[Math.floor(rndFn() * LETTER_POOL.length)];
     }
     return { rows, cols, cells };
+}
+
+// ── Procedural board generator ──────────────────────────────────────────────
+let _pbTrie = null;
+
+function _pbGetTrie() {
+    if (_pbTrie) return _pbTrie;
+    const root = Object.create(null);
+    for (const word of dictionary) {
+        if (word.length < 4 || word.length > 18) continue;
+        let n = root;
+        for (const ch of word) { if (!n[ch]) n[ch] = Object.create(null); n = n[ch]; }
+        n.$ = 1;
+    }
+    return (_pbTrie = root);
+}
+
+function _pbGaussian(mu, sigma) {
+    const u1 = Math.random() || 1e-10, u2 = Math.random();
+    const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    return Math.min(25, Math.max(6, Math.round(mu + sigma * z)));
+}
+
+function _pbGrowShape(target) {
+    const S = 5;
+    const adj4 = id => { const r=id/S|0,c=id%S,a=[]; if(r>0)a.push(id-S); if(r<S-1)a.push(id+S); if(c>0)a.push(id-1); if(c<S-1)a.push(id+1); return a; };
+    const adj8 = id => { const r=id/S|0,c=id%S,a=[]; for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){if(!dr&&!dc)continue; const nr=r+dr,nc=c+dc; if(nr>=0&&nr<S&&nc>=0&&nc<S)a.push(nr*S+nc);} return a; };
+
+    const occupied = new Set();
+    const fSet = new Set(), fArr = [];
+    const start = Math.random() * 25 | 0;
+    occupied.add(start);
+    for (const nb of adj4(start)) { fSet.add(nb); fArr.push(nb); }
+
+    while (occupied.size < target && fArr.length > 0) {
+        const i = Math.random() * fArr.length | 0;
+        const cell = fArr[i]; fArr.splice(i, 1); fSet.delete(cell);
+        occupied.add(cell);
+        for (const nb of adj4(cell)) if (!occupied.has(nb) && !fSet.has(nb)) { fSet.add(nb); fArr.push(nb); }
+    }
+
+    const nodes = [], idxOf = new Map();
+    for (const id of occupied) { idxOf.set(id, nodes.length); nodes.push({ id, coord:{r:id/S|0,c:id%S}, letter:'', isQU:false, neighbors:[] }); }
+    for (const node of nodes) for (const nid of adj8(node.id)) if (occupied.has(nid)) node.neighbors.push(idxOf.get(nid));
+    return nodes;
+}
+
+function _pbTopologyOk(graph) {
+    const n = graph.length;
+    if (graph.filter(nd => nd.neighbors.length <= 2).length / n >= 0.85) return false;
+    if (n >= 6 && n <= 8 && !graph.some(nd => nd.neighbors.length >= 3)) return false;
+    return true;
+}
+
+function _pbAssignLetters(graph) {
+    const VP = 'E'.repeat(13)+'A'.repeat(9)+'I'.repeat(9)+'O'.repeat(7)+'U'.repeat(3)+'Y'.repeat(3);
+    const CP = 'S'.repeat(10)+'T'.repeat(10)+'R'.repeat(10)+'N'.repeat(10)+'L'.repeat(10)+'D'.repeat(10)+'C'.repeat(6)+'M'.repeat(6)+'P'.repeat(6)+'G'.repeat(5)+'B'.repeat(4)+'H'.repeat(3)+'F'.repeat(3)+'W'.repeat(3)+'KK'+'VV'+'JQXZ';
+    const n = graph.length, vCount = Math.round(n * 0.38);
+    const idxs = Array.from({length:n},(_,i)=>i);
+    for (let i=n-1;i>0;i--) { const j=Math.random()*i|0; [idxs[i],idxs[j]]=[idxs[j],idxs[i]]; }
+    const vowelSet = new Set(idxs.slice(0, vCount));
+    for (let i=0;i<n;i++) graph[i].letter = vowelSet.has(i) ? VP[Math.random()*VP.length|0] : CP[Math.random()*CP.length|0];
+
+    for (const node of graph) {
+        if (node.letter !== 'Q') continue;
+        const nbs = node.neighbors.map(ni => graph[ni]);
+        let t = nbs.find(nb => 'AEIOU'.includes(nb.letter));
+        if (!t && nbs.length) t = nbs[Math.random()*nbs.length|0];
+        if (t) { t.letter = 'U'; t.isQU = true; }
+    }
+
+    const friendly = new Set('STNRLDCGMPWBFH');
+    for (const node of graph)
+        if (node.neighbors.length === 1 && !'AEIOU'.includes(node.letter) && !friendly.has(node.letter))
+            node.letter = VP[Math.random()*VP.length|0];
+
+    for (const node of graph) {
+        if (node.letter !== 'J' && node.letter !== 'K') continue;
+        if (node.neighbors.length > 0 && !node.neighbors.some(ni => 'AEIOU'.includes(graph[ni].letter)))
+            graph[node.neighbors[Math.random()*node.neighbors.length|0]].letter = VP[Math.random()*VP.length|0];
+    }
+}
+
+function _pbFindCovered(graph, trie) {
+    const n = graph.length, covered = new Set();
+    function dfs(ni, trNode, depth, vis) {
+        if (vis.has(ni)) return;
+        const next = trNode[graph[ni].letter];
+        if (!next) return;
+        vis.add(ni);
+        if (depth >= 4 && next.$) for (const idx of vis) covered.add(idx);
+        if (depth < 18 && covered.size < n) for (const nni of graph[ni].neighbors) dfs(nni, next, depth+1, vis);
+        vis.delete(ni);
+    }
+    for (let i=0; i<n && covered.size<n; i++) dfs(i, trie, 1, new Set());
+    return covered;
+}
+
+function _pbCanCoverNode(nodeIdx, graph, trie) {
+    function dfs(ni, trNode, depth, vis) {
+        if (vis.has(ni)) return false;
+        const next = trNode[graph[ni].letter];
+        if (!next) return false;
+        vis.add(ni);
+        if (depth >= 4 && next.$ && vis.has(nodeIdx)) { vis.delete(ni); return true; }
+        if (depth < 18) for (const nni of graph[ni].neighbors) if (dfs(nni, next, depth+1, vis)) { vis.delete(ni); return true; }
+        vis.delete(ni); return false;
+    }
+    for (let i=0; i<graph.length; i++) if (dfs(i, trie, 1, new Set())) return true;
+    return false;
+}
+
+function _pbValidateRepair(graph, trie) {
+    const repairs = ['E','A','T','S','R','I','N','O'];
+    for (let iter=0; iter<50; iter++) {
+        const covered = _pbFindCovered(graph, trie);
+        if (covered.size === graph.length) return true;
+        let changed = false;
+        for (let i=0; i<graph.length; i++) {
+            if (covered.has(i)) continue;
+            const node = graph[i];
+            if (node.isQU) continue;
+            const orig = node.letter;
+            let fixed = false;
+            for (const rep of repairs) {
+                if (rep === orig) continue;
+                node.letter = rep;
+                if (_pbCanCoverNode(i, graph, trie)) { fixed = true; changed = true; break; }
+                node.letter = orig;
+            }
+            if (!fixed) node.letter = orig;
+        }
+        if (!changed) return false;
+    }
+    return _pbFindCovered(graph, trie).size === graph.length;
+}
+
+function _pbToBoard(graph) {
+    let minR=Infinity, maxR=-Infinity, minC=Infinity, maxC=-Infinity;
+    for (const nd of graph) {
+        if (nd.coord.r<minR) minR=nd.coord.r; if (nd.coord.r>maxR) maxR=nd.coord.r;
+        if (nd.coord.c<minC) minC=nd.coord.c; if (nd.coord.c>maxC) maxC=nd.coord.c;
+    }
+    const rows=maxR-minR+1, cols=maxC-minC+1;
+    const lookup = new Map(graph.map(nd => [(nd.coord.r-minR)*cols+(nd.coord.c-minC), nd.letter]));
+    const cells = Array.from({length:rows}, (_,r) => Array.from({length:cols}, (_,c) => { const k=r*cols+c; return lookup.has(k)?lookup.get(k):null; }));
+    return { rows, cols, cells };
+}
+
+function _pbBuildRectGraph(rows, cols) {
+    const nodes = [], idxOf = new Map();
+    for (let r=0;r<rows;r++) for (let c=0;c<cols;c++) {
+        idxOf.set(r*cols+c, nodes.length);
+        nodes.push({ id:r*cols+c, coord:{r,c}, letter:'', isQU:false, neighbors:[] });
+    }
+    for (const node of nodes) {
+        const {r,c} = node.coord;
+        for (let dr=-1;dr<=1;dr++) for (let dc=-1;dc<=1;dc++) {
+            if (!dr&&!dc) continue;
+            const nr=r+dr, nc=c+dc;
+            if (nr>=0&&nr<rows&&nc>=0&&nc<cols) node.neighbors.push(idxOf.get(nr*cols+nc));
+        }
+    }
+    return nodes;
+}
+
+function generateShapedBoard(rows, cols) {
+    const trie = _pbGetTrie();
+    const graph = _pbBuildRectGraph(rows, cols);
+    _pbAssignLetters(graph);
+    _pbValidateRepair(graph, trie);
+    const cells = Array.from({length:rows}, (_,r) =>
+        Array.from({length:cols}, (_,c) => graph[r*cols+c].letter));
+    return { rows, cols, cells };
+}
+
+function generateProceduralBoard() {
+    const trie = _pbGetTrie();
+    for (let attempt=0; attempt<200; attempt++) {
+        const graph = _pbGrowShape(_pbGaussian(9, 3));
+        if (!_pbTopologyOk(graph)) continue;
+        _pbAssignLetters(graph);
+        if (_pbValidateRepair(graph, trie)) return _pbToBoard(graph);
+    }
+    return generateBoard(4, 4, Math.random);
 }
 
 function generateRoomId() {
@@ -472,6 +658,7 @@ function processDictText(text) {
         .filter(w => w && w.length >= 4 && /^[A-Z]+$/i.test(w))
         .map(w => w.toUpperCase());
     dictionary = new Set(words);
+    _pbTrie = null;
     try { localStorage.setItem(DICT_CACHE_KEY, words.join('\n')); } catch {}
     document.getElementById('loader').style.display = 'none';
 }
@@ -938,7 +1125,7 @@ function handleRoomUpdate(data) {
             roomPlayingInitialized = false;
             scoreBoardShown = false;
         }
-        if (!roomPlayingInitialized) renderRoomPlaying(data);
+        if (!roomPlayingInitialized && data.currentRound > roomLastPlayedRound) renderRoomPlaying(data);
     } else if (data.state === 'finished') {
         if (data.players?.[playerId]?.closedScoreboard) {
             showPanel('lobby');
@@ -992,10 +1179,12 @@ function renderLobby(data) {
     const s = data.settings || {rows:4,cols:4,minutes:3};
     const rows = s.rows || s.size || 4;
     const cols = s.cols || s.size || 4;
-    const isCustom = s.custom === true || !([3,4,5].includes(rows) && rows === cols);
+    const isRandom = s.mode === 'random';
+    const isCustom = !isRandom && (s.custom === true || !([3,4,5].includes(rows) && rows === cols));
     document.querySelectorAll('.size-tab').forEach(btn => {
         const br=parseInt(btn.dataset.r), bc=parseInt(btn.dataset.c);
-        btn.classList.toggle('active', br===0 ? isCustom : br===rows && bc===cols);
+        if (br===-1) { btn.classList.toggle('active', isRandom); return; }
+        btn.classList.toggle('active', br===0 ? isCustom : !isRandom && br===rows && bc===cols);
     });
     document.getElementById('custom-size-row').style.display = isCustom ? '' : 'none';
     if (isCustom) { document.getElementById('custom-rows').value=rows; document.getElementById('custom-cols').value=cols; }
@@ -1023,7 +1212,7 @@ async function setRoomSetting(field, val) {
 }
 
 async function setRoomSize(rows, cols) {
-    await roomRef.child('settings').update({ rows, cols, custom: false });
+    await roomRef.child('settings').update({ rows, cols, custom: false, mode: 'shaped' });
 }
 
 function setRoomSizeCustom() {
@@ -1035,7 +1224,12 @@ function setRoomSizeCustom() {
 function applyCustomSize() {
     const r = parseInt(document.getElementById('custom-rows').value) || 5;
     const c = parseInt(document.getElementById('custom-cols').value) || 5;
-    roomRef.child('settings').update({ rows: r, cols: c, custom: true });
+    roomRef.child('settings').update({ rows: r, cols: c, custom: true, mode: 'shaped' });
+}
+
+function setRoomSizeRandom() {
+    document.getElementById('custom-size-row').style.display = 'none';
+    roomRef.child('settings').update({ rows: 5, cols: 5, custom: false, mode: 'random' });
 }
 
 function initMinutesPicker(initialValue) {
@@ -1076,7 +1270,8 @@ async function autoStartGame(data) {
             const rows = s.rows || s.size || 4;
             const cols = s.cols || s.size || 4;
             const nextRound = (d.currentRound ?? -1) + 1;
-            const updates = { board: generateBoard(rows, cols, Math.random), startedAt: Date.now(), currentRound: nextRound };
+            const board = s.mode === 'random' ? generateProceduralBoard() : generateShapedBoard(rows, cols);
+            const updates = { board, startedAt: Date.now(), currentRound: nextRound };
             for (const pid of Object.keys(d.players || {})) {
                 updates[`players/${pid}/closedScoreboard`] = false;
                 updates[`players/${pid}/ready`] = false;
@@ -1289,6 +1484,7 @@ function openPlayerModal(name, foundWordsArr) {
 async function closeScoreboard() {
     document.getElementById('player-modal-overlay')?.remove();
     roomPlayingInitialized=false; scoreBoardShown=false; roomScoreSubmitted=false;
+    roomLastPlayedRound = roomCurrentRound;
     await roomRef.update({
         [`players/${playerId}/closedScoreboard`]: true,
         [`players/${playerId}/ready`]: false
@@ -1302,6 +1498,7 @@ async function leaveRoom() {
     // Reset room state
     roomMode=false; roomId=null; roomFoundWords=new Set();
     roomPlayingInitialized=false; scoreBoardShown=false; roomScoreSubmitted=false;
+    roomLastPlayedRound=-1;
 
     history.replaceState({}, '', location.pathname);
 

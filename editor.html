@@ -175,6 +175,7 @@
         </div>
         <div class="status" id="status"></div>
         <div class="actions">
+            <button class="btn btn-sec" onclick="generateRandom()">Generate Random</button>
             <button class="btn btn-sec" onclick="clearAll()">Clear</button>
             <button class="btn" id="push-btn" onclick="pushBoard()">Push to GitHub</button>
         </div>
@@ -392,6 +393,85 @@ function showStatus(msg, type) {
 }
 function clearStatus() {
     document.getElementById('status').className = 'status';
+}
+
+// ── Procedural board generator (Phases 1-4, no dictionary required) ─────────
+function _edGaussian(mu, sigma) {
+    const u1 = Math.random() || 1e-10, u2 = Math.random();
+    return Math.min(25, Math.max(6, Math.round(mu + sigma * Math.sqrt(-2*Math.log(u1)) * Math.cos(2*Math.PI*u2))));
+}
+
+function _edGrowShape(target) {
+    const S = 5;
+    const adj4 = id => { const r=id/S|0,c=id%S,a=[]; if(r>0)a.push(id-S); if(r<S-1)a.push(id+S); if(c>0)a.push(id-1); if(c<S-1)a.push(id+1); return a; };
+    const adj8 = id => { const r=id/S|0,c=id%S,a=[]; for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){if(!dr&&!dc)continue;const nr=r+dr,nc=c+dc;if(nr>=0&&nr<S&&nc>=0&&nc<S)a.push(nr*S+nc);}return a; };
+    const occupied=new Set(), fSet=new Set(), fArr=[];
+    const start=Math.random()*25|0; occupied.add(start);
+    for(const nb of adj4(start)){fSet.add(nb);fArr.push(nb);}
+    while(occupied.size<target&&fArr.length>0){
+        const i=Math.random()*fArr.length|0, cell=fArr[i]; fArr.splice(i,1); fSet.delete(cell);
+        occupied.add(cell);
+        for(const nb of adj4(cell)) if(!occupied.has(nb)&&!fSet.has(nb)){fSet.add(nb);fArr.push(nb);}
+    }
+    const nodes=[], idxOf=new Map();
+    for(const id of occupied){idxOf.set(id,nodes.length);nodes.push({id,coord:{r:id/S|0,c:id%S},letter:'',isQU:false,neighbors:[]});}
+    for(const node of nodes) for(const nid of adj8(node.id)) if(occupied.has(nid)) node.neighbors.push(idxOf.get(nid));
+    return nodes;
+}
+
+function _edTopologyOk(graph) {
+    const n=graph.length;
+    if(graph.filter(nd=>nd.neighbors.length<=2).length/n>=0.85) return false;
+    if(n>=6&&n<=8&&!graph.some(nd=>nd.neighbors.length>=3)) return false;
+    return true;
+}
+
+function _edAssignLetters(graph) {
+    const VP='E'.repeat(13)+'A'.repeat(9)+'I'.repeat(9)+'O'.repeat(7)+'U'.repeat(3)+'Y'.repeat(3);
+    const CP='S'.repeat(10)+'T'.repeat(10)+'R'.repeat(10)+'N'.repeat(10)+'L'.repeat(10)+'D'.repeat(10)+'C'.repeat(6)+'M'.repeat(6)+'P'.repeat(6)+'G'.repeat(5)+'B'.repeat(4)+'H'.repeat(3)+'F'.repeat(3)+'W'.repeat(3)+'KK'+'VV'+'JQXZ';
+    const n=graph.length, vCount=Math.round(n*0.38);
+    const idxs=Array.from({length:n},(_,i)=>i);
+    for(let i=n-1;i>0;i--){const j=Math.random()*i|0;[idxs[i],idxs[j]]=[idxs[j],idxs[i]];}
+    const vowelSet=new Set(idxs.slice(0,vCount));
+    for(let i=0;i<n;i++) graph[i].letter=vowelSet.has(i)?VP[Math.random()*VP.length|0]:CP[Math.random()*CP.length|0];
+    for(const node of graph){
+        if(node.letter!=='Q') continue;
+        const nbs=node.neighbors.map(ni=>graph[ni]);
+        let t=nbs.find(nb=>'AEIOU'.includes(nb.letter));
+        if(!t&&nbs.length) t=nbs[Math.random()*nbs.length|0];
+        if(t){t.letter='U';t.isQU=true;}
+    }
+    const friendly=new Set('STNRLDCGMPWBFH');
+    for(const node of graph)
+        if(node.neighbors.length===1&&!'AEIOU'.includes(node.letter)&&!friendly.has(node.letter))
+            node.letter=VP[Math.random()*VP.length|0];
+    for(const node of graph){
+        if(node.letter!=='J'&&node.letter!=='K') continue;
+        if(node.neighbors.length>0&&!node.neighbors.some(ni=>'AEIOU'.includes(graph[ni].letter)))
+            graph[node.neighbors[Math.random()*node.neighbors.length|0]].letter=VP[Math.random()*VP.length|0];
+    }
+}
+
+function _edToBoard(graph) {
+    let minR=Infinity,maxR=-Infinity,minC=Infinity,maxC=-Infinity;
+    for(const nd of graph){if(nd.coord.r<minR)minR=nd.coord.r;if(nd.coord.r>maxR)maxR=nd.coord.r;if(nd.coord.c<minC)minC=nd.coord.c;if(nd.coord.c>maxC)maxC=nd.coord.c;}
+    const rows=maxR-minR+1,cols=maxC-minC+1;
+    const lookup=new Map(graph.map(nd=>[(nd.coord.r-minR)*cols+(nd.coord.c-minC),nd.letter]));
+    const cells=Array.from({length:rows},(_,r)=>Array.from({length:cols},(_,c)=>{const k=r*cols+c;return lookup.has(k)?lookup.get(k):null;}));
+    return{rows,cols,cells};
+}
+
+function generateRandom() {
+    for(let attempt=0; attempt<200; attempt++){
+        const graph=_edGrowShape(_edGaussian(9,3));
+        if(!_edTopologyOk(graph)) continue;
+        _edAssignLetters(graph);
+        const board=_edToBoard(graph);
+        editorRows=board.rows; editorCols=board.cols;
+        buildEditorTable(false, board.cells);
+        clearStatus();
+        return;
+    }
 }
 </script>
 </body>
