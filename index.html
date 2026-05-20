@@ -233,12 +233,21 @@
         }
         .room-menu-item:hover { background: var(--cell-active); color: var(--primary); }
 
-        /* ── Scoreboard word reveal ── */
-        .word-reveal { display: flex; flex-wrap: wrap; gap: 4px 10px; }
-        .wr-found  { font-weight: 700; color: #16a34a; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
-        .wr-missed { font-weight: 400; color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
-        .player-words-panel { padding: 10px 14px 8px; background: var(--bg); border-radius: 10px; margin-top: 3px; }
         .score-row { cursor: pointer; }
+
+        /* ── Player words modal ── */
+        .player-modal-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+            z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px;
+        }
+        .player-modal {
+            background: var(--surface); border-radius: 16px; padding: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.25); width: 100%; max-width: 320px;
+            max-height: 65vh; display: flex; flex-direction: column; gap: 12px;
+        }
+        .player-modal-hdr { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+        .player-modal-title { font-size: 1rem; font-weight: 800; }
+        .player-modal-body { overflow-y: auto; flex: 1; }
     </style>
 </head>
 <body>
@@ -277,11 +286,12 @@
 </div>
 
 <div class="game-container" id="game-container">
-    <div class="info-bar">
+    <div class="info-bar" id="info-bar">
         <div class="score-wrap">
             <button class="score-btn" id="score-btn" onclick="togglePopup(event)">Found: 0 / --</button>
             <div class="word-popup" id="word-popup" style="display:none;"></div>
         </div>
+        <span id="room-score-display" style="display:none;font-size:0.95rem;font-weight:700;color:var(--text)">Score: 0</span>
     </div>
     <div class="current-word" id="word-preview"></div>
     <div class="board-container" id="board-container">
@@ -358,10 +368,6 @@
             <span class="sb-title">Game Over</span>
         </div>
         <div class="scoreboard" id="scoreboard-body"></div>
-        <div id="my-words-section" class="card" style="display:none">
-            <div class="card-title" style="font-size:0.88rem">Your Words</div>
-            <div class="word-reveal" id="my-words-list"></div>
-        </div>
         <button class="btn btn-full" onclick="playAgain()" style="margin-top:4px">Play Again</button>
         <button class="btn btn-outline btn-full" onclick="leaveRoom()">Leave Room</button>
     </div>
@@ -727,6 +733,7 @@ function updateScoreUI() {
 }
 function updateRoomScoreUI() {
     document.getElementById('score-btn').textContent = `Found: ${roomFoundWords.size} / ${validWords.size}`;
+    document.getElementById('room-score-display').textContent = `Score: ${totalScore(roomFoundWords)}`;
 }
 
 // ── Word popup ─────────────────────────────────────────────────────────────
@@ -1033,6 +1040,9 @@ function renderRoomPlaying(data) {
     roomCurrentRound   = data.currentRound ?? 0;
 
     document.getElementById('score-btn').textContent = 'Calculating…';
+    document.getElementById('room-score-display').textContent = 'Score: 0';
+    document.getElementById('room-score-display').style.display = '';
+    document.getElementById('info-bar').style.justifyContent = 'space-between';
     document.getElementById('timer-display').textContent = '--:--';
     document.getElementById('timer-display').classList.remove('urgent');
     document.getElementById('room-code-label').textContent = `Room: ${roomId}`;
@@ -1114,6 +1124,8 @@ function renderScoreboard(data) {
         roundWords: p.rounds?.[round]?.words || []
     })).sort((a,b) => b.gamePoints-a.gamePoints || (b.roundScore||0)-(a.roundScore||0));
 
+    document.getElementById('player-modal-overlay')?.remove();
+
     const sb = document.getElementById('scoreboard-body');
     sb.innerHTML = '';
     entries.forEach((e,i) => {
@@ -1122,46 +1134,90 @@ function renderScoreboard(data) {
         row.innerHTML=`<span class="score-name">${e.name}</span>
             <span class="score-gp">${e.gamePoints} pt${e.gamePoints!==1?'s':''}</span>
             <span class="score-rnd">${e.roundScore!==null?'+'+e.roundScore:'…'}</span>`;
-        row.onclick = () => togglePlayerWords(row, e.roundWords);
+        row.onclick = () => openPlayerModal(e.name, e.roundWords);
         sb.appendChild(row);
     });
 
-    // My words section
-    const mySection = document.getElementById('my-words-section');
-    const myList    = document.getElementById('my-words-list');
-    if (validWords.size > 0) {
-        mySection.style.display = '';
-        myList.innerHTML = '';
-        [...validWords].sort().forEach(w => {
-            const span = document.createElement('span');
-            span.className = roomFoundWords.has(w) ? 'wr-found' : 'wr-missed';
-            span.textContent = w;
-            myList.appendChild(span);
-        });
-    }
+    // Thick separator + my found words by letter count
+    const sep = document.createElement('div');
+    sep.style.cssText = 'border-top:3px solid var(--text-muted);margin:4px 0 2px';
+    sb.appendChild(sep);
+
+    buildWordGroup(sb, roomFoundWords, 'Your Words');
 }
 
-function togglePlayerWords(row, foundWordsArr) {
-    const existing = row.nextElementSibling;
-    if (existing && existing.classList.contains('player-words-panel')) {
-        existing.remove(); return;
+function buildWordGroup(container, wordSet, label) {
+    if (label) {
+        const title = document.createElement('div');
+        title.style.cssText = 'font-size:0.82rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin:4px 0 2px';
+        title.textContent = label;
+        container.appendChild(title);
     }
-    const panel = document.createElement('div');
-    panel.className = 'player-words-panel';
-    const found = new Set(foundWordsArr);
-    const wr = document.createElement('div');
-    wr.className = 'word-reveal';
-    [...validWords].sort().forEach(w => {
-        const span = document.createElement('span');
-        span.className = found.has(w) ? 'wr-found' : 'wr-missed';
-        span.textContent = w;
-        wr.appendChild(span);
+
+    const groups = {};
+    for (const w of wordSet) {
+        if (!groups[w.length]) groups[w.length] = [];
+        groups[w.length].push(w);
+    }
+    const keys = Object.keys(groups).sort((a,b) => a-b);
+    if (!keys.length) {
+        const none = document.createElement('div');
+        none.style.cssText = 'color:var(--text-muted);font-size:.88rem;padding:4px 0';
+        none.textContent = 'No words found.';
+        container.appendChild(none);
+        return;
+    }
+    keys.forEach(len => {
+        const words = groups[len].sort();
+        const sec = document.createElement('div'); sec.className = 'popup-section';
+        const row = document.createElement('div'); row.className = 'popup-row';
+        row.innerHTML = `<span class="popup-label">${len}-letter words</span><span class="popup-count">${words.length}</span>`;
+        sec.appendChild(row);
+        const wl = document.createElement('div'); wl.className = 'popup-words';
+        words.forEach(w => {
+            const chip = document.createElement('span'); chip.className = 'popup-chip'; chip.textContent = w;
+            wl.appendChild(chip);
+        });
+        sec.appendChild(wl);
+        container.appendChild(sec);
     });
-    panel.appendChild(wr);
-    row.parentNode.insertBefore(panel, row.nextSibling);
+}
+
+function openPlayerModal(name, foundWordsArr) {
+    document.getElementById('player-modal-overlay')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'player-modal-overlay';
+    overlay.className = 'player-modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+
+    const modal = document.createElement('div');
+    modal.className = 'player-modal';
+    modal.onclick = e => e.stopPropagation();
+
+    const hdr = document.createElement('div');
+    hdr.className = 'player-modal-hdr';
+    const title = document.createElement('div');
+    title.className = 'player-modal-title';
+    title.textContent = name;
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'btn btn-outline btn-sm';
+    closeBtn.textContent = '✕';
+    closeBtn.onclick = () => overlay.remove();
+    hdr.appendChild(title); hdr.appendChild(closeBtn);
+    modal.appendChild(hdr);
+
+    const body = document.createElement('div');
+    body.className = 'player-modal-body';
+    buildWordGroup(body, new Set(foundWordsArr), null);
+    modal.appendChild(body);
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
 }
 
 async function playAgain() {
+    document.getElementById('player-modal-overlay')?.remove();
     roomPlayingInitialized=false; scoreBoardShown=false; roomScoreSubmitted=false;
     await roomRef.update({ state:'lobby' });
 }
@@ -1173,6 +1229,8 @@ async function leaveRoom() {
     // Reset room state
     roomMode=false; roomId=null; roomFoundWords=new Set();
     roomPlayingInitialized=false; scoreBoardShown=false; roomScoreSubmitted=false;
+    document.getElementById('room-score-display').style.display='none';
+    document.getElementById('info-bar').style.justifyContent='';
 
     history.replaceState({}, '', location.pathname);
 
