@@ -139,10 +139,15 @@
             <label class="field-label" for="gh-token">Personal Access Token</label>
             <input class="field-input" type="password" id="gh-token" placeholder="ghp_…" autocomplete="off" spellcheck="false">
         </div>
+        <div>
+            <label class="field-label" for="gh-branch">Branch</label>
+            <input class="field-input" type="text" id="gh-branch" placeholder="main" autocomplete="off" spellcheck="false">
+        </div>
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
             <p class="hint">
                 Token needs <b>Contents: Read &amp; Write</b>.<br>
-                GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens.
+                GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens.<br>
+                Branch is the one GitHub Pages serves from (usually <b>main</b> or <b>gh-pages</b>).
             </p>
             <button class="btn" onclick="saveGhSettings()">Save</button>
         </div>
@@ -183,7 +188,7 @@ let editorRows = 5, editorCols = 5;
 window.addEventListener('DOMContentLoaded', async () => {
     loadGhSettings();
     try {
-        const res = await fetch('./board-config.json');
+        const res = await fetch('./board-config.json', { cache: 'no-store' });
         if (res.ok) {
             const cfg = await res.json();
             editorRows = cfg.rows;
@@ -197,19 +202,23 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 // ── GitHub Settings ────────────────────────────────────────────────────────
 function loadGhSettings() {
-    const repo  = localStorage.getItem('gh_repo')  || '';
-    const token = localStorage.getItem('gh_token') || '';
-    document.getElementById('gh-repo').value  = repo;
-    document.getElementById('gh-token').value = token;
+    const repo   = localStorage.getItem('gh_repo')   || '';
+    const token  = localStorage.getItem('gh_token')  || '';
+    const branch = localStorage.getItem('gh_branch') || '';
+    document.getElementById('gh-repo').value   = repo;
+    document.getElementById('gh-token').value  = token;
+    document.getElementById('gh-branch').value = branch;
     if (repo && token) document.getElementById('gh-saved').classList.add('visible');
 }
 
 function saveGhSettings() {
-    const repo  = document.getElementById('gh-repo').value.trim();
-    const token = document.getElementById('gh-token').value.trim();
+    const repo   = document.getElementById('gh-repo').value.trim();
+    const token  = document.getElementById('gh-token').value.trim();
+    const branch = document.getElementById('gh-branch').value.trim() || 'main';
     if (!repo || !token) { alert('Please enter both the repo and token.'); return; }
-    localStorage.setItem('gh_repo',  repo);
-    localStorage.setItem('gh_token', token);
+    localStorage.setItem('gh_repo',   repo);
+    localStorage.setItem('gh_token',  token);
+    localStorage.setItem('gh_branch', branch);
     const ind = document.getElementById('gh-saved');
     ind.classList.add('visible');
     ind.textContent = 'Saved ✓';
@@ -225,19 +234,20 @@ async function pushBoard() {
         return;
     }
 
-    const repo  = localStorage.getItem('gh_repo')  || '';
-    const token = localStorage.getItem('gh_token') || '';
+    const repo   = localStorage.getItem('gh_repo')   || '';
+    const token  = localStorage.getItem('gh_token')  || '';
+    const branch = localStorage.getItem('gh_branch') || 'main';
     if (!repo || !token) {
         showStatus('Save your GitHub repo and token in the settings above first.', 'err');
         return;
     }
 
     const config  = { rows: editorRows, cols: editorCols, cells };
-    const content = btoa(JSON.stringify(config, null, 2));
+    const content = btoa(unescape(encodeURIComponent(JSON.stringify(config, null, 2))));
     const apiUrl  = `https://api.github.com/repos/${repo}/contents/board-config.json`;
     const headers = {
         'Authorization': `Bearer ${token}`,
-        'Accept': 'application/vnd.github.v3+json',
+        'Accept': 'application/vnd.github+json',
         'Content-Type': 'application/json'
     };
 
@@ -247,20 +257,20 @@ async function pushBoard() {
 
     let sha = null;
     try {
-        const getRes = await fetch(apiUrl, { headers });
+        const getRes = await fetch(`${apiUrl}?ref=${branch}`, { headers, cache: 'no-store' });
         if (getRes.ok) sha = (await getRes.json()).sha;
-        else if (getRes.status !== 404) throw new Error(`${getRes.status}`);
+        else if (getRes.status !== 404) throw new Error(`${getRes.status} — check repo name and branch`);
     } catch (e) {
         btn.disabled = false;
-        showStatus(`Could not reach GitHub. Check your repo name and token. (${e.message})`, 'err');
+        showStatus(`Could not reach GitHub: ${e.message}`, 'err');
         return;
     }
 
     try {
-        const body = { message: 'Update board config', content, ...(sha ? { sha } : {}) };
+        const body = { message: 'Update board config', content, branch, ...(sha ? { sha } : {}) };
         const putRes = await fetch(apiUrl, { method: 'PUT', headers, body: JSON.stringify(body) });
         if (putRes.ok) {
-            showStatus('Board pushed! The live game will update in about a minute.', 'ok');
+            showStatus('Pushed! Hard-refresh the game in a minute (Ctrl+Shift+R / Cmd+Shift+R) to see the new board.', 'ok');
         } else {
             const err = await putRes.json().catch(() => ({}));
             showStatus(`GitHub error: ${err.message || putRes.status}`, 'err');

@@ -38,12 +38,13 @@
         .header-title img { height: 38px; width: auto; display: block; }
         .room-create-btn {
             position: absolute; right: 16px;
-            background: var(--primary); color: #fff; border: none;
+            background: var(--cell-active); color: var(--primary);
+            border: 1px solid var(--cell-border-active);
             width: 38px; height: 38px; border-radius: 10px;
             font-size: 1.35rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
             line-height: 1;
         }
-        .room-create-btn:hover { background: var(--primary-hover); }
+        .room-create-btn:hover { background: var(--cell-border-active); color: #fff; }
 
         /* ── Room bar (shown during room game play) ── */
         .room-bar {
@@ -368,7 +369,7 @@
             <span class="sb-title">Game Over</span>
         </div>
         <div class="scoreboard" id="scoreboard-body"></div>
-        <button class="btn btn-full" onclick="playAgain()" style="margin-top:4px">Play Again</button>
+        <button class="btn btn-full" onclick="closeScoreboard()" style="margin-top:4px">Close</button>
         <button class="btn btn-outline btn-full" onclick="leaveRoom()">Leave Room</button>
     </div>
 
@@ -478,7 +479,7 @@ function processDictText(text) {
 // ── Board config (solo daily board) ───────────────────────────────────────
 async function loadBoardConfig() {
     try {
-        const res = await fetch('./board-config.json');
+        const res = await fetch('./board-config.json', { cache: 'no-store' });
         if (!res.ok) throw new Error();
         const cfg = await res.json();
         boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
@@ -536,6 +537,10 @@ window.addEventListener('DOMContentLoaded', async () => {
             && !menu.contains(e.target)
             && e.target !== document.getElementById('start-room-btn'))
             menu.style.display = 'none';
+    });
+
+    window.addEventListener('popstate', () => {
+        if (roomMode && !new URLSearchParams(location.search).get('room')) leaveRoom();
     });
 });
 
@@ -1116,6 +1121,7 @@ function renderScoreboard(data) {
 
     const players = data.players || {};
     const round   = data.currentRound ?? 0;
+    const pointsDone = (data[`pointsRound${round}`] || '').toString().startsWith('done:');
     const entries = Object.entries(players).map(([pid,p]) => ({
         pid,
         name:       p.name || '?',
@@ -1128,9 +1134,17 @@ function renderScoreboard(data) {
 
     const sb = document.getElementById('scoreboard-body');
     sb.innerHTML = '';
+
+    if (!pointsDone) {
+        const loader = document.createElement('div');
+        loader.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;font-size:0.82rem;color:var(--text-muted);font-weight:600;padding:4px 0 6px';
+        loader.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div>Calculating winner…';
+        sb.appendChild(loader);
+    }
+
     entries.forEach((e,i) => {
         const row=document.createElement('div');
-        row.className='score-row'+(i===0?' gold':'');
+        row.className='score-row'+(i===0&&pointsDone?' gold':'');
         row.innerHTML=`<span class="score-name">${e.name}</span>
             <span class="score-gp">${e.gamePoints} pt${e.gamePoints!==1?'s':''}</span>
             <span class="score-rnd">${e.roundScore!==null?'+'+e.roundScore:'…'}</span>`;
@@ -1143,10 +1157,10 @@ function renderScoreboard(data) {
     sep.style.cssText = 'border-top:3px solid var(--text-muted);margin:4px 0 2px';
     sb.appendChild(sep);
 
-    buildWordGroup(sb, roomFoundWords, 'Your Words');
+    buildWordGroup(sb, roomFoundWords, validWords, 'Your Words');
 }
 
-function buildWordGroup(container, wordSet, label) {
+function buildWordGroup(container, foundSet, allWords, label) {
     if (label) {
         const title = document.createElement('div');
         title.style.cssText = 'font-size:0.82rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin:4px 0 2px';
@@ -1155,7 +1169,7 @@ function buildWordGroup(container, wordSet, label) {
     }
 
     const groups = {};
-    for (const w of wordSet) {
+    for (const w of allWords) {
         if (!groups[w.length]) groups[w.length] = [];
         groups[w.length].push(w);
     }
@@ -1163,19 +1177,21 @@ function buildWordGroup(container, wordSet, label) {
     if (!keys.length) {
         const none = document.createElement('div');
         none.style.cssText = 'color:var(--text-muted);font-size:.88rem;padding:4px 0';
-        none.textContent = 'No words found.';
+        none.textContent = 'No words available.';
         container.appendChild(none);
         return;
     }
     keys.forEach(len => {
         const words = groups[len].sort();
+        const foundCount = words.filter(w => foundSet.has(w)).length;
         const sec = document.createElement('div'); sec.className = 'popup-section';
         const row = document.createElement('div'); row.className = 'popup-row';
-        row.innerHTML = `<span class="popup-label">${len}-letter words</span><span class="popup-count">${words.length}</span>`;
+        row.innerHTML = `<span class="popup-label">${len}-letter words</span><span class="popup-count">${foundCount} / ${words.length}</span>`;
         sec.appendChild(row);
         const wl = document.createElement('div'); wl.className = 'popup-words';
         words.forEach(w => {
             const chip = document.createElement('span'); chip.className = 'popup-chip'; chip.textContent = w;
+            if (foundSet.has(w)) { chip.style.fontWeight = '700'; chip.style.color = '#16a34a'; }
             wl.appendChild(chip);
         });
         sec.appendChild(wl);
@@ -1209,17 +1225,17 @@ function openPlayerModal(name, foundWordsArr) {
 
     const body = document.createElement('div');
     body.className = 'player-modal-body';
-    buildWordGroup(body, new Set(foundWordsArr), null);
+    buildWordGroup(body, new Set(foundWordsArr), validWords, null);
     modal.appendChild(body);
 
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 }
 
-async function playAgain() {
+async function closeScoreboard() {
     document.getElementById('player-modal-overlay')?.remove();
     roomPlayingInitialized=false; scoreBoardShown=false; roomScoreSubmitted=false;
-    await roomRef.update({ state:'lobby' });
+    await roomRef.update({ state: 'lobby', [`players/${playerId}/ready`]: false });
 }
 
 async function leaveRoom() {
