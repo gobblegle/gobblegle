@@ -934,6 +934,10 @@ function handleRoomUpdate(data) {
         renderLobby(data);
         checkAutoStart(data);
     } else if (data.state === 'playing') {
+        if (data.currentRound !== roomCurrentRound) {
+            roomPlayingInitialized = false;
+            scoreBoardShown = false;
+        }
         if (!roomPlayingInitialized) renderRoomPlaying(data);
     } else if (data.state === 'finished') {
         if (data.players?.[playerId]?.closedScoreboard) {
@@ -1073,7 +1077,10 @@ async function autoStartGame(data) {
             const cols = s.cols || s.size || 4;
             const nextRound = (d.currentRound ?? -1) + 1;
             const updates = { board: generateBoard(rows, cols, Math.random), startedAt: Date.now(), currentRound: nextRound };
-            for (const pid of Object.keys(d.players || {})) updates[`players/${pid}/closedScoreboard`] = false;
+            for (const pid of Object.keys(d.players || {})) {
+                updates[`players/${pid}/closedScoreboard`] = false;
+                updates[`players/${pid}/ready`] = false;
+            }
             await roomRef.update(updates);
         }
     );
@@ -1126,6 +1133,7 @@ async function endRoomGame() {
 
     await roomRef.child(`players/${playerId}/rounds/${roomCurrentRound}`)
         .set({ score: totalScore(roomFoundWords), words: [...roomFoundWords] });
+    await roomRef.child(`players/${playerId}`).update({ ready: false, closedScoreboard: false });
 
     roomRef.child('state').transaction(cur => cur==='playing' ? 'finished' : undefined,
         (err, committed) => { if (committed) setTimeout(awardGamePoints, 5000); });
@@ -1159,6 +1167,7 @@ function renderScoreboard(data) {
         roomScoreSubmitted = true;
         roomRef.child(`players/${playerId}/rounds/${roomCurrentRound}`)
             .set({ score: totalScore(roomFoundWords), words: [...roomFoundWords] });
+        roomRef.child(`players/${playerId}`).update({ ready: false, closedScoreboard: false });
     }
     if (roomCountdownInterval) { clearInterval(roomCountdownInterval); roomCountdownInterval=null; }
 
