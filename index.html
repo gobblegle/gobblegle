@@ -39,8 +39,9 @@
         .room-create-btn {
             position: absolute; right: 16px;
             background: var(--primary); color: #fff; border: none;
-            padding: 7px 13px; border-radius: 8px; font-weight: 600;
-            font-size: 0.82rem; cursor: pointer; white-space: nowrap; font-family: inherit;
+            width: 38px; height: 38px; border-radius: 10px;
+            font-size: 1.35rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+            line-height: 1;
         }
         .room-create-btn:hover { background: var(--primary-hover); }
 
@@ -217,6 +218,27 @@
         .ready-badge { margin-left: auto; font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 5px; }
         .ready-badge.yes { background: #dcfce7; color: #16a34a; }
         .ready-badge.no  { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); }
+
+        /* ── Room menu dropdown ── */
+        .room-menu {
+            position: absolute; right: 16px; top: calc(100% + 6px);
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 12px; padding: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.13);
+            display: flex; flex-direction: column; z-index: 100; min-width: 178px;
+        }
+        .room-menu-item {
+            padding: 9px 12px; border-radius: 8px; border: none; background: none;
+            text-align: left; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+            font-family: inherit; color: var(--text); width: 100%;
+        }
+        .room-menu-item:hover { background: var(--cell-active); color: var(--primary); }
+
+        /* ── Scoreboard word reveal ── */
+        .word-reveal { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+        .wr-found  { font-weight: 700; color: #16a34a; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+        .wr-missed { font-weight: 400; color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+        .player-words-panel { padding: 10px 14px 8px; background: var(--bg); border-radius: 10px; margin-top: 3px; }
+        .score-row { cursor: pointer; }
     </style>
 </head>
 <body>
@@ -231,7 +253,19 @@
         <img src="gobblegleturkey.png" alt="">
         <img src="gobblegletitle.png" alt="Gobblegle">
     </div>
-    <button class="room-create-btn" id="start-room-btn" onclick="createRoom()">Start a Room</button>
+    <button class="room-create-btn" id="start-room-btn" onclick="toggleRoomMenu(event)" title="Room" aria-label="Room">🚪</button>
+    <div class="room-menu" id="room-menu" style="display:none">
+        <button class="room-menu-item" onclick="startRoomFromMenu()">Start a Room</button>
+        <button class="room-menu-item" onclick="showJoinInput()">Join a Room</button>
+        <div id="join-code-row" style="display:none;padding:0 4px 4px">
+            <div style="display:flex;gap:6px;margin-top:6px">
+                <input class="field-input" type="text" id="join-code-input" placeholder="Room code" maxlength="6"
+                       style="flex:1;text-transform:uppercase;letter-spacing:0.12em;font-weight:700;font-size:0.95rem"
+                       onkeydown="if(event.key==='Enter')joinRoomByCode()">
+                <button class="btn" style="padding:9px 14px" onclick="joinRoomByCode()">Go</button>
+            </div>
+        </div>
+    </div>
 </header>
 
 <div class="room-bar" id="room-bar">
@@ -300,10 +334,10 @@
                 <span class="setting-label">Rows × Cols</span>
                 <div style="display:flex;align-items:center;gap:6px">
                     <input class="minutes-input" type="number" id="custom-rows" min="2" max="10" value="5"
-                           onchange="setRoomSize(parseInt(this.value)||5,parseInt(document.getElementById('custom-cols').value)||5)">
+                           onchange="applyCustomSize()">
                     <span class="hint">×</span>
                     <input class="minutes-input" type="number" id="custom-cols" min="2" max="10" value="5"
-                           onchange="setRoomSize(parseInt(document.getElementById('custom-rows').value)||5,parseInt(this.value)||5)">
+                           onchange="applyCustomSize()">
                 </div>
             </div>
             <div class="setting-row">
@@ -324,6 +358,10 @@
             <span class="sb-title">Game Over</span>
         </div>
         <div class="scoreboard" id="scoreboard-body"></div>
+        <div id="my-words-section" class="card" style="display:none">
+            <div class="card-title" style="font-size:0.88rem">Your Words</div>
+            <div class="word-reveal" id="my-words-list"></div>
+        </div>
         <button class="btn btn-full" onclick="playAgain()" style="margin-top:4px">Play Again</button>
         <button class="btn btn-outline btn-full" onclick="leaveRoom()">Leave Room</button>
     </div>
@@ -487,6 +525,11 @@ window.addEventListener('DOMContentLoaded', async () => {
             && !popup.contains(e.target)
             && e.target !== document.getElementById('score-btn'))
             popup.style.display = 'none';
+        const menu = document.getElementById('room-menu');
+        if (menu.style.display !== 'none'
+            && !menu.contains(e.target)
+            && e.target !== document.getElementById('start-room-btn'))
+            menu.style.display = 'none';
     });
 });
 
@@ -758,6 +801,40 @@ function resetProgress() { foundWords.clear(); resetTimer(); saveProgress(); upd
 // ROOM SYSTEM
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ── Room menu ──────────────────────────────────────────────────────────────
+function toggleRoomMenu(e) {
+    e.stopPropagation();
+    const menu = document.getElementById('room-menu');
+    const open = menu.style.display === 'none';
+    menu.style.display = open ? '' : 'none';
+    if (open) {
+        document.getElementById('join-code-row').style.display = 'none';
+        document.getElementById('join-code-input').value = '';
+    }
+}
+
+function startRoomFromMenu() {
+    document.getElementById('room-menu').style.display = 'none';
+    createRoom();
+}
+
+function showJoinInput() {
+    document.getElementById('join-code-row').style.display = '';
+    document.getElementById('join-code-input').focus();
+}
+
+async function joinRoomByCode() {
+    const code = document.getElementById('join-code-input').value.trim().toUpperCase();
+    if (!code) return;
+    if (!db) {
+        alert('Rooms need Firebase.\n\nCreate a free project at firebase.google.com, enable Realtime Database, then paste the config into index.html where it says REPLACE_ME.');
+        return;
+    }
+    document.getElementById('room-menu').style.display = 'none';
+    history.pushState({}, '', `?room=${code}`);
+    await initRoomMode(code);
+}
+
 async function createRoom() {
     if (!db) {
         alert('Rooms need Firebase.\n\nCreate a free project at firebase.google.com, enable Realtime Database, then paste the config into index.html where it says REPLACE_ME.');
@@ -855,7 +932,7 @@ function renderLobby(data) {
     const s = data.settings || {rows:4,cols:4,minutes:3};
     const rows = s.rows || s.size || 4;
     const cols = s.cols || s.size || 4;
-    const isCustom = !([3,4,5].includes(rows) && rows === cols);
+    const isCustom = s.custom === true || !([3,4,5].includes(rows) && rows === cols);
     document.querySelectorAll('.size-tab').forEach(btn => {
         const br=parseInt(btn.dataset.r), bc=parseInt(btn.dataset.c);
         btn.classList.toggle('active', br===0 ? isCustom : br===rows && bc===cols);
@@ -886,15 +963,19 @@ async function setRoomSetting(field, val) {
 }
 
 async function setRoomSize(rows, cols) {
-    await roomRef.child('settings').update({ rows, cols });
+    await roomRef.child('settings').update({ rows, cols, custom: false });
 }
 
 function setRoomSizeCustom() {
     document.getElementById('custom-size-row').style.display = '';
     document.querySelectorAll('.size-tab').forEach(btn=>btn.classList.toggle('active', btn.dataset.r==='0'));
-    const r=parseInt(document.getElementById('custom-rows').value)||5;
-    const c=parseInt(document.getElementById('custom-cols').value)||5;
-    setRoomSize(r, c);
+    applyCustomSize();
+}
+
+function applyCustomSize() {
+    const r = parseInt(document.getElementById('custom-rows').value) || 5;
+    const c = parseInt(document.getElementById('custom-cols').value) || 5;
+    roomRef.child('settings').update({ rows: r, cols: c, custom: true });
 }
 
 function initMinutesPicker(initialValue) {
@@ -915,6 +996,10 @@ function initMinutesPicker(initialValue) {
                 setRoomSetting('minutes', val);
             }, 150);
         }, {passive:true});
+        scroller.addEventListener('wheel', e => {
+            e.preventDefault();
+            scroller.scrollBy({ top: e.deltaY > 0 ? 40 : -40, behavior: 'smooth' });
+        }, {passive:false});
     }
     requestAnimationFrame(() => { scroller.scrollTop = (initialValue-1)*40; });
 }
@@ -1021,10 +1106,12 @@ function renderScoreboard(data) {
 
     const players = data.players || {};
     const round   = data.currentRound ?? 0;
-    const entries = Object.entries(players).map(([,p]) => ({
+    const entries = Object.entries(players).map(([pid,p]) => ({
+        pid,
         name:       p.name || '?',
         gamePoints: p.gamePoints || 0,
-        roundScore: p.rounds?.[round]?.score ?? null
+        roundScore: p.rounds?.[round]?.score ?? null,
+        roundWords: p.rounds?.[round]?.words || []
     })).sort((a,b) => b.gamePoints-a.gamePoints || (b.roundScore||0)-(a.roundScore||0));
 
     const sb = document.getElementById('scoreboard-body');
@@ -1035,8 +1122,43 @@ function renderScoreboard(data) {
         row.innerHTML=`<span class="score-name">${e.name}</span>
             <span class="score-gp">${e.gamePoints} pt${e.gamePoints!==1?'s':''}</span>
             <span class="score-rnd">${e.roundScore!==null?'+'+e.roundScore:'…'}</span>`;
+        row.onclick = () => togglePlayerWords(row, e.roundWords);
         sb.appendChild(row);
     });
+
+    // My words section
+    const mySection = document.getElementById('my-words-section');
+    const myList    = document.getElementById('my-words-list');
+    if (validWords.size > 0) {
+        mySection.style.display = '';
+        myList.innerHTML = '';
+        [...validWords].sort().forEach(w => {
+            const span = document.createElement('span');
+            span.className = roomFoundWords.has(w) ? 'wr-found' : 'wr-missed';
+            span.textContent = w;
+            myList.appendChild(span);
+        });
+    }
+}
+
+function togglePlayerWords(row, foundWordsArr) {
+    const existing = row.nextElementSibling;
+    if (existing && existing.classList.contains('player-words-panel')) {
+        existing.remove(); return;
+    }
+    const panel = document.createElement('div');
+    panel.className = 'player-words-panel';
+    const found = new Set(foundWordsArr);
+    const wr = document.createElement('div');
+    wr.className = 'word-reveal';
+    [...validWords].sort().forEach(w => {
+        const span = document.createElement('span');
+        span.className = found.has(w) ? 'wr-found' : 'wr-missed';
+        span.textContent = w;
+        wr.appendChild(span);
+    });
+    panel.appendChild(wr);
+    row.parentNode.insertBefore(panel, row.nextSibling);
 }
 
 async function playAgain() {
@@ -1044,11 +1166,28 @@ async function playAgain() {
     await roomRef.update({ state:'lobby' });
 }
 
-function leaveRoom() {
+async function leaveRoom() {
     if (roomRef) { try { roomRef.child(`players/${playerId}`).remove(); } catch {} roomRef.off(); roomRef=null; }
     if (roomCountdownInterval) { clearInterval(roomCountdownInterval); roomCountdownInterval=null; }
+
+    // Reset room state
+    roomMode=false; roomId=null; roomFoundWords=new Set();
+    roomPlayingInitialized=false; scoreBoardShown=false; roomScoreSubmitted=false;
+
     history.replaceState({}, '', location.pathname);
-    location.reload();
+
+    // Restore solo UI
+    document.getElementById('room-overlay').classList.remove('visible');
+    document.getElementById('room-bar').classList.remove('visible');
+    document.getElementById('game-container').style.display='';
+    document.getElementById('start-room-btn').style.display='';
+
+    // Reload solo board and progress
+    resetTimer();
+    await loadBoardConfig();
+    loadProgress();
+    calculateValidWords();
+    renderBoard();
 }
 
 function shareRoom() {
