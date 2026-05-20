@@ -121,7 +121,7 @@
         .grid-cell {
             background: #fff; border: 2px solid var(--border); border-radius: 12px;
             display: flex; align-items: center; justify-content: center;
-            font-size: var(--cell-font, 1.5rem); font-weight: 700; text-transform: uppercase;
+            font-size: var(--cell-font, 2.5rem); font-weight: 700; text-transform: uppercase;
             width: var(--cell-size, 54px); height: var(--cell-size, 54px);
             transition: background 0.1s, border-color 0.1s, transform 0.1s;
             position: relative; z-index: 2;
@@ -568,7 +568,7 @@ function updateCellSize() {
     const cellFromH = (availH - (boardRows - 1) * gap) / boardRows;
     const cellFromW = (availW - (boardCols - 1) * gap) / boardCols;
     const cellSize  = Math.max(32, Math.floor(Math.min(cellFromH, cellFromW)));
-    const fontSize  = Math.max(0.75, Math.min(1.5, cellSize / 36));
+    const fontSize  = Math.max(0.8, cellSize / 22);
 
     document.documentElement.style.setProperty('--cell-size', `${cellSize}px`);
     document.documentElement.style.setProperty('--cell-font', `${fontSize}rem`);
