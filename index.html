@@ -297,14 +297,14 @@
         <span id="room-score-display" style="font-size:0.95rem;font-weight:700;color:var(--text)">Score: 0</span>
     </div>
     <div class="current-word" id="word-preview"></div>
-    <div class="board-container" id="board-container">
-        <svg class="svg-overlay" id="svg-overlay"></svg>
-        <div class="grid" id="grid"></div>
+    <div id="board-wrapper" style="position:relative;margin:0 auto;padding-top:34px;">
+        <button id="rotate-btn" onclick="rotateBoard()" title="Rotate board 90°" style="position:absolute;top:0;right:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;color:var(--text-muted);opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'">↻</button>
+        <div class="board-container" id="board-container">
+            <svg class="svg-overlay" id="svg-overlay"></svg>
+            <div class="grid" id="grid"></div>
+        </div>
     </div>
-    <div style="display:flex;align-items:center;justify-content:center;gap:14px">
-        <div class="timer" id="timer-display">00:00</div>
-        <button onclick="rotateBoard()" title="Rotate board 90°" style="background:none;border:none;cursor:pointer;padding:2px 4px;font-size:1.45rem;line-height:1;color:var(--text-muted);opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'">↻</button>
-    </div>
+    <div class="timer" id="timer-display">00:00</div>
 </div>
 
 <div class="room-overlay" id="room-overlay">
@@ -370,12 +370,14 @@
     </div>
 
     <!-- Scoreboard -->
-    <div id="scoreboard-panel" class="room-panel" style="display:none">
+    <div id="scoreboard-panel" class="room-panel" style="display:none; overflow-y:auto; max-height:calc(100vh - 32px); padding-top:0;">
+        <div style="position:sticky;top:0;z-index:5;background:var(--bg);padding:16px 0 10px;">
+            <button class="btn btn-full" onclick="closeScoreboard()">Close</button>
+        </div>
         <div class="lobby-hdr" style="justify-content:center">
             <span class="sb-title">Game Over</span>
         </div>
-        <div class="scoreboard" id="scoreboard-body"></div>
-        <button class="btn btn-full" onclick="closeScoreboard()" style="margin-top:4px">Close</button>
+        <div class="scoreboard" id="scoreboard-body" style="padding-bottom:16px;"></div>
     </div>
 
 </div>
@@ -935,29 +937,35 @@ function updateCellSize() {
     const gc = document.getElementById('game-container');
     if (!gc || gc.style.display === 'none') return;
 
-    const headerH   = document.querySelector('header')?.offsetHeight || 67;
-    const roomBarEl = document.getElementById('room-bar');
-    const roomBarH  = roomBarEl?.classList.contains('visible') ? roomBarEl.offsetHeight : 0;
-    const infoBarH  = document.getElementById('info-bar')?.offsetHeight || 42;
-    const previewH  = document.getElementById('word-preview')?.offsetHeight || 46;
-    const timerH    = document.getElementById('timer-display')?.offsetHeight || 28;
+    const headerH    = document.querySelector('header')?.offsetHeight || 67;
+    const roomBarEl  = document.getElementById('room-bar');
+    const roomBarH   = roomBarEl?.classList.contains('visible') ? roomBarEl.offsetHeight : 0;
+    const infoBarH   = document.getElementById('info-bar')?.offsetHeight || 42;
+    const previewH   = document.getElementById('word-preview')?.offsetHeight || 46;
+    const timerH     = document.getElementById('timer-display')?.offsetHeight || 28;
+    const rotateBtnH = 34;
 
-    const paddingV = 28;   // 14px top + 14px bottom on game-container
-    const gapsV    = 30;   // 10px × 3 gaps between 4 flex children
+    const paddingV = 28;
+    const gapsV    = 30;
     const safetyV  = 8;
 
-    const availH = Math.max(60, window.innerHeight - headerH - roomBarH - infoBarH - previewH - timerH - paddingV - gapsV - safetyV);
+    const availH = Math.max(60, window.innerHeight - headerH - roomBarH - infoBarH - previewH - timerH - rotateBtnH - paddingV - gapsV - safetyV);
     const availW = Math.min(window.innerWidth - 32, 508);
 
     const gap = 8;
-    const dim = Math.max(boardRows, boardCols); // keep tile size stable across rotations
-    const cellFromH = (availH - (dim - 1) * gap) / dim;
-    const cellFromW = (availW - (dim - 1) * gap) / dim;
-    const cellSize  = Math.max(32, Math.floor(Math.min(cellFromH, cellFromW)));
-    const fontSize  = Math.max(0.8, cellSize / 29);
+    const dim = Math.max(boardRows, boardCols);
+    const baseCellFromH = (availH - (dim - 1) * gap) / dim;
+    const baseCellFromW = (availW - (dim - 1) * gap) / dim;
+    const baseCellSize  = Math.max(36, Math.floor(Math.min(baseCellFromH, baseCellFromW)));
+    const cellSize      = Math.floor(baseCellSize * 0.9);
+    const fontSize      = Math.max(0.8, cellSize / 29);
 
     document.documentElement.style.setProperty('--cell-size', `${cellSize}px`);
     document.documentElement.style.setProperty('--cell-font', `${fontSize}rem`);
+
+    const fullGridW = dim * baseCellSize + (dim - 1) * gap;
+    const wrapper = document.getElementById('board-wrapper');
+    if (wrapper) wrapper.style.width = `${fullGridW}px`;
 }
 
 let _resizeTimer;
@@ -965,14 +973,62 @@ window.addEventListener('resize', () => { clearTimeout(_resizeTimer); _resizeTim
 
 // ── Board rotation ────────────────────────────────────────────────────────
 function rotateBoard() {
-    const oldRows = boardRows, oldCols = boardCols;
-    // 90° clockwise: newCells[newR][newC] = oldCells[oldRows-1-newC][newR]
-    const newCells = Array.from({length: oldCols}, (_, newR) =>
-        Array.from({length: oldRows}, (_, newC) => boardCells[oldRows-1-newC]?.[newR] ?? null));
-    boardRows = oldCols; boardCols = oldRows; boardCells = newCells;
-    clearPathUI();
-    updateCellSize();
-    renderBoard();
+    const wrapper = document.getElementById('board-wrapper');
+    if (wrapper?.dataset.rotating === 'true') return;
+    const container = document.getElementById('board-container');
+    const grid = document.getElementById('grid');
+    const cellSz = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--cell-size')) || 54;
+
+    const wrapR = wrapper.getBoundingClientRect();
+    const conR  = container.getBoundingClientRect();
+    const cx = conR.left - wrapR.left + conR.width  / 2;
+    const cy = conR.top  - wrapR.top  + conR.height / 2;
+
+    const layers = [];
+    for (let r = 0; r < boardRows; r++) {
+        for (let c = 0; c < boardCols; c++) {
+            const el = cellElements[r]?.[c];
+            if (!el || boardCells[r]?.[c] === null) continue;
+            const eR  = el.getBoundingClientRect();
+            const ecx = eR.left - wrapR.left + cellSz / 2;
+            const ecy = eR.top  - wrapR.top  + cellSz / 2;
+            const dx = ecx - cx, dy = ecy - cy;
+            const radius = Math.sqrt(dx * dx + dy * dy);
+            const sa = radius < 0.5 ? 0 : Math.atan2(dy, dx);
+            const clone = el.cloneNode(true);
+            clone.style.cssText = `position:absolute;width:${cellSz}px;height:${cellSz}px;left:${ecx - cellSz/2}px;top:${ecy - cellSz/2}px;margin:0;z-index:10;pointer-events:none;transition:none`;
+            wrapper.appendChild(clone);
+            layers.push({ clone, radius, sa });
+        }
+    }
+
+    grid.style.visibility = 'hidden';
+    wrapper.dataset.rotating = 'true';
+
+    const T = 500, t0 = performance.now();
+    function ease(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2; }
+
+    function frame(now) {
+        const raw = Math.min((now - t0) / T, 1);
+        const da  = ease(raw) * Math.PI / 2;
+        for (const {clone, radius, sa} of layers) {
+            const a = sa + da;
+            clone.style.left = (cx + radius * Math.cos(a) - cellSz / 2) + 'px';
+            clone.style.top  = (cy + radius * Math.sin(a) - cellSz / 2) + 'px';
+        }
+        if (raw < 1) { requestAnimationFrame(frame); return; }
+        for (const {clone} of layers) wrapper.removeChild(clone);
+        grid.style.visibility = '';
+        wrapper.dataset.rotating = 'false';
+        const oldRows = boardRows, oldCols = boardCols;
+        const newCells = Array.from({length: oldCols}, (_, nr) =>
+            Array.from({length: oldRows}, (_, nc) => boardCells[oldRows-1-nc]?.[nr] ?? null));
+        boardRows = oldCols; boardCols = oldRows; boardCells = newCells;
+        clearPathUI();
+        updateCellSize();
+        renderBoard();
+    }
+    requestAnimationFrame(frame);
 }
 
 // ── Board rendering ────────────────────────────────────────────────────────
