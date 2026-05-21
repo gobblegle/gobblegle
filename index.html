@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
     <title>Gobblegle</title>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
@@ -496,13 +498,31 @@ function _pbAssignLetters(graph) {
     const VP = 'E'.repeat(13)+'A'.repeat(9)+'I'.repeat(9)+'O'.repeat(7)+'U'.repeat(3)+'Y'.repeat(3);
     const CP = 'S'.repeat(10)+'T'.repeat(10)+'R'.repeat(10)+'N'.repeat(10)+'L'.repeat(10)+'D'.repeat(10)+'C'.repeat(6)+'M'.repeat(6)+'P'.repeat(6)+'G'.repeat(5)+'B'.repeat(4)+'H'.repeat(3)+'F'.repeat(3)+'W'.repeat(3)+'KK'+'VV'+'JQXZ';
     const n = graph.length, vCount = Math.round(n * 0.38);
+
+    // Repeat cap: no letter appears more than maxRep times (prevents TTTAAEE boards)
+    const maxRep = Math.max(1, Math.ceil(n / 8));
+    const counts = {};
+    const draw = pool => {
+        for (let t=0; t<40; t++) {
+            const ch = pool[Math.random()*pool.length|0];
+            if ((counts[ch]||0) < maxRep) { counts[ch]=(counts[ch]||0)+1; return ch; }
+        }
+        return pool[Math.random()*pool.length|0]; // fallback if all capped
+    };
+
     const idxs = Array.from({length:n},(_,i)=>i);
     for (let i=n-1;i>0;i--) { const j=Math.random()*i|0; [idxs[i],idxs[j]]=[idxs[j],idxs[i]]; }
     const vowelSet = new Set(idxs.slice(0, vCount));
-    for (let i=0;i<n;i++) graph[i].letter = vowelSet.has(i) ? VP[Math.random()*VP.length|0] : CP[Math.random()*CP.length|0];
+    for (let i=0;i<n;i++) graph[i].letter = vowelSet.has(i) ? draw(VP) : draw(CP);
 
+    // Q-U cascade: Q is only kept on high-connectivity nodes (degree >= 3)
+    const safeConsonants = 'STNRLDCGMP';
     for (const node of graph) {
         if (node.letter !== 'Q') continue;
+        if (node.neighbors.length < 3) {
+            node.letter = safeConsonants[Math.random()*safeConsonants.length|0];
+            continue;
+        }
         const nbs = node.neighbors.map(ni => graph[ni]);
         let t = nbs.find(nb => 'AEIOU'.includes(nb.letter));
         if (!t && nbs.length) t = nbs[Math.random()*nbs.length|0];
@@ -551,7 +571,7 @@ function _pbCanCoverNode(nodeIdx, graph, trie) {
 }
 
 function _pbValidateRepair(graph, trie) {
-    const repairs = ['E','A','T','S','R','I','N','O'];
+    const baseRepairs = ['E','A','T','S','R','I','N','O'];
     for (let iter=0; iter<50; iter++) {
         const covered = _pbFindCovered(graph, trie);
         if (covered.size === graph.length) return true;
@@ -562,6 +582,8 @@ function _pbValidateRepair(graph, trie) {
             if (node.isQU) continue;
             const orig = node.letter;
             let fixed = false;
+            // Shuffle repair order per node to prevent E/A/T dominance in repaired boards
+            const repairs = [...baseRepairs].sort(() => Math.random()-0.5);
             for (const rep of repairs) {
                 if (rep === orig) continue;
                 node.letter = rep;

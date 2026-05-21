@@ -173,6 +173,9 @@
         <div class="table-wrap">
             <table class="editor-table" id="editor-table"></table>
         </div>
+        <div style="font-size:0.85rem;font-weight:600;color:var(--text-muted)">
+            Valid words: <span id="word-count" style="color:var(--primary)">—</span>
+        </div>
         <div class="status" id="status"></div>
         <div class="actions">
             <button class="btn btn-sec" onclick="generateRandom()">Generate Random</button>
@@ -313,6 +316,7 @@ function buildEditorTable(keepExisting, prefill) {
             inp.addEventListener('input', () => {
                 inp.value = inp.value.slice(-1).toUpperCase();
                 clearStatus();
+                scheduleWordCount();
                 if (inp.value) {
                     const next = table.querySelector(`input[data-r="${r}"][data-c="${c+1}"]`)
                               || table.querySelector(`input[data-r="${r+1}"][data-c="0"]`);
@@ -338,12 +342,14 @@ function adjustDim(dim, delta) {
     if (dim === 'rows') editorRows = Math.max(1, Math.min(10, editorRows + delta));
     else                editorCols = Math.max(1, Math.min(10, editorCols + delta));
     buildEditorTable(true, null);
+    scheduleWordCount();
 }
 
 function clearAll() {
     document.getElementById('editor-table').querySelectorAll('input')
         .forEach(inp => inp.value = '');
     clearStatus();
+    scheduleWordCount();
 }
 
 function readCells() {
@@ -384,6 +390,65 @@ function isConnected(cells, rows, cols) {
             }
     }
     return visited.size === lc.length;
+}
+
+// ── Word count ─────────────────────────────────────────────────────────────
+let edDict = null;
+let _wcTimer;
+
+(async () => {
+    const cached = localStorage.getItem('G2_dict_v2');
+    if (cached) { edDict = new Set(cached.split('\n')); updateWordCount(); return; }
+    try {
+        const res = await fetch('./NWL2023.txt');
+        if (res.ok) {
+            const words = (await res.text()).split(/[\n\r]+/)
+                .map(l => l.trim().split(/\s+/)[0])
+                .filter(w => w && w.length >= 4 && /^[A-Z]+$/i.test(w))
+                .map(w => w.toUpperCase());
+            edDict = new Set(words);
+            try { localStorage.setItem('G2_dict_v2', words.join('\n')); } catch {}
+            updateWordCount();
+        }
+    } catch {}
+})();
+
+function edCanSpell(word, cells, rows, cols) {
+    function dfs(idx, r, c) {
+        if (!cells[r]?.[c] || cells[r][c] !== word[idx]) return false;
+        if (idx === word.length-1) return true;
+        for (let dr=-1;dr<=1;dr++) for (let dc=-1;dc<=1;dc++)
+            if ((dr||dc) && r+dr>=0 && r+dr<rows && c+dc>=0 && c+dc<cols && dfs(idx+1,r+dr,c+dc)) return true;
+        return false;
+    }
+    for (let r=0;r<rows;r++) for (let c=0;c<cols;c++)
+        if (cells[r]?.[c] === word[0] && dfs(0,r,c)) return true;
+    return false;
+}
+
+function scheduleWordCount() {
+    clearTimeout(_wcTimer);
+    _wcTimer = setTimeout(() => {
+        document.getElementById('word-count').textContent = '…';
+        requestAnimationFrame(updateWordCount);
+    }, 200);
+}
+
+function updateWordCount() {
+    const el = document.getElementById('word-count');
+    if (!edDict) { el.textContent = '—'; return; }
+    const { cells, hasAny } = readCells();
+    if (!hasAny) { el.textContent = '—'; return; }
+    if (!isConnected(cells, editorRows, editorCols)) { el.textContent = '—'; return; }
+    const ls = new Set();
+    for (let r=0;r<editorRows;r++) for (let c=0;c<editorCols;c++) if (cells[r]?.[c]) ls.add(cells[r][c]);
+    let count = 0;
+    for (const word of edDict) {
+        let ok = true;
+        for (const ch of word) if (!ls.has(ch)) { ok=false; break; }
+        if (ok && edCanSpell(word, cells, editorRows, editorCols)) count++;
+    }
+    el.textContent = count.toLocaleString();
 }
 
 function showStatus(msg, type) {
@@ -428,25 +493,25 @@ function _edTopologyOk(graph) {
 
 function _edAssignLetters(graph) {
     const VP='E'.repeat(13)+'A'.repeat(9)+'I'.repeat(9)+'O'.repeat(7)+'U'.repeat(3)+'Y'.repeat(3);
-    const CP='S'.repeat(10)+'T'.repeat(10)+'R'.repeat(10)+'N'.repeat(10)+'L'.repeat(10)+'D'.repeat(10)+'C'.repeat(6)+'M'.repeat(6)+'P'.repeat(6)+'G'.repeat(5)+'B'.repeat(4)+'H'.repeat(3)+'F'.repeat(3)+'W'.repeat(3)+'KK'+'VV'+'JQXZ';
+    // No Q/X/Z in editor pool — no dictionary validation available to guarantee usability
+    const CP='S'.repeat(10)+'T'.repeat(10)+'R'.repeat(10)+'N'.repeat(10)+'L'.repeat(10)+'D'.repeat(10)+'C'.repeat(6)+'M'.repeat(6)+'P'.repeat(6)+'G'.repeat(5)+'B'.repeat(4)+'H'.repeat(3)+'F'.repeat(3)+'W'.repeat(3)+'KK'+'VV'+'J';
     const n=graph.length, vCount=Math.round(n*0.38);
+    const maxRep=Math.max(1,Math.ceil(n/8));
+    const counts={};
+    const draw=pool=>{
+        for(let t=0;t<40;t++){const ch=pool[Math.random()*pool.length|0];if((counts[ch]||0)<maxRep){counts[ch]=(counts[ch]||0)+1;return ch;}}
+        return pool[Math.random()*pool.length|0];
+    };
     const idxs=Array.from({length:n},(_,i)=>i);
     for(let i=n-1;i>0;i--){const j=Math.random()*i|0;[idxs[i],idxs[j]]=[idxs[j],idxs[i]];}
     const vowelSet=new Set(idxs.slice(0,vCount));
-    for(let i=0;i<n;i++) graph[i].letter=vowelSet.has(i)?VP[Math.random()*VP.length|0]:CP[Math.random()*CP.length|0];
-    for(const node of graph){
-        if(node.letter!=='Q') continue;
-        const nbs=node.neighbors.map(ni=>graph[ni]);
-        let t=nbs.find(nb=>'AEIOU'.includes(nb.letter));
-        if(!t&&nbs.length) t=nbs[Math.random()*nbs.length|0];
-        if(t){t.letter='U';t.isQU=true;}
-    }
+    for(let i=0;i<n;i++) graph[i].letter=vowelSet.has(i)?draw(VP):draw(CP);
     const friendly=new Set('STNRLDCGMPWBFH');
     for(const node of graph)
         if(node.neighbors.length===1&&!'AEIOU'.includes(node.letter)&&!friendly.has(node.letter))
             node.letter=VP[Math.random()*VP.length|0];
     for(const node of graph){
-        if(node.letter!=='J'&&node.letter!=='K') continue;
+        if(node.letter!=='J') continue;
         if(node.neighbors.length>0&&!node.neighbors.some(ni=>'AEIOU'.includes(graph[ni].letter)))
             graph[node.neighbors[Math.random()*node.neighbors.length|0]].letter=VP[Math.random()*VP.length|0];
     }
@@ -470,6 +535,7 @@ function generateRandom() {
         editorRows=board.rows; editorCols=board.cols;
         buildEditorTable(false, board.cells);
         clearStatus();
+        scheduleWordCount();
         return;
     }
 }
