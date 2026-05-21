@@ -415,7 +415,7 @@ const DICT_CACHE_KEY = 'G2_dict_v2';
 let boardRows = 5, boardCols = 5, boardCells = [], cellElements = [];
 let dictionary = new Set(), validWords = new Set(), foundWords = new Set();
 let isSelecting = false, currentPath = [];
-let timerStarted = false, timerSeconds = 0, timerInterval = null;
+let timerStarted = false, timerSeconds = 0, timerInterval = null, timerPaused = false;
 
 // Room state
 let roomMode = false, roomId = null, playerId = null;
@@ -874,13 +874,19 @@ function getBoardHash() { return boardCells.flat().map(c => c||'_').join(''); }
 function saveProgress() {
     const h = getBoardHash();
     localStorage.setItem(`G2_found_${h}`, JSON.stringify([...foundWords]));
-    localStorage.setItem(`G2_timer_${h}`, timerSeconds);
+    localStorage.setItem(`G2_timer_${h}`, JSON.stringify({ s: timerSeconds, started: timerStarted }));
 }
 function loadProgress() {
     const h = getBoardHash();
-    foundWords   = new Set(JSON.parse(localStorage.getItem(`G2_found_${h}`) || '[]'));
-    timerSeconds = parseInt(localStorage.getItem(`G2_timer_${h}`) || '0');
+    foundWords = new Set(JSON.parse(localStorage.getItem(`G2_found_${h}`) || '[]'));
+    const saved = JSON.parse(localStorage.getItem(`G2_timer_${h}`) || '{}');
+    timerSeconds = saved.s || 0;
     updateTimerDisplay();
+    if (saved.started) {
+        timerStarted = true;
+        timerPaused = false;
+        timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
+    }
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
@@ -1148,9 +1154,26 @@ function clearPathUI() {
 function startTimer() {
     if (timerStarted) return;
     timerStarted = true;
+    timerPaused = false;
     timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
 }
-function resetTimer() { clearInterval(timerInterval); timerInterval=null; timerStarted=false; timerSeconds=0; updateTimerDisplay(); }
+function pauseTimer() {
+    if (!timerStarted || timerPaused) return;
+    timerPaused = true;
+    clearInterval(timerInterval);
+    timerInterval = null;
+    saveProgress();
+}
+function resumeTimer() {
+    if (!timerStarted || !timerPaused) return;
+    timerPaused = false;
+    timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
+}
+function resetTimer() { clearInterval(timerInterval); timerInterval=null; timerStarted=false; timerPaused=false; timerSeconds=0; updateTimerDisplay(); }
+document.addEventListener('visibilitychange', () => {
+    if (roomMode) return;
+    if (document.hidden) pauseTimer(); else resumeTimer();
+});
 function updateTimerDisplay() {
     if (roomMode) return;
     const m=String(Math.floor(timerSeconds/60)).padStart(2,'0'), s=String(timerSeconds%60).padStart(2,'0');
