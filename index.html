@@ -1122,12 +1122,16 @@ async function initRoomMode(rid) {
     document.getElementById('room-overlay').classList.add('visible');
 
     const savedName = localStorage.getItem('gob_name') || '';
-    if (savedName) document.getElementById('player-name-input').value = savedName;
+    if (savedName && savedName !== 'undefined') document.getElementById('player-name-input').value = savedName;
 
     // Returning player: restore online status before listener fires
     const roomData = snap.val();
     const existingPlayer = roomData?.players?.[playerId];
-    if (existingPlayer && existingPlayer.online === false) {
+    const hasValidName = existingPlayer?.name && existingPlayer.name !== 'undefined';
+    if (existingPlayer && existingPlayer.online === false && hasValidName) {
+        // Restore Firebase name to input and localStorage in case localStorage drifted
+        document.getElementById('player-name-input').value = existingPlayer.name;
+        localStorage.setItem('gob_name', existingPlayer.name);
         await roomRef.child(`players/${playerId}`).update({ online: true, ready: false });
         roomRef.child(`players/${playerId}/online`).onDisconnect().set(false);
     }
@@ -1243,7 +1247,7 @@ function renderLobby(data) {
 async function joinLobby() {
     const inp  = document.getElementById('player-name-input');
     const name = inp.value.trim();
-    if (!name) { inp.focus(); return; }
+    if (!name || name === 'undefined') { inp.value = ''; inp.focus(); return; }
     localStorage.setItem('gob_name', name);
     const snap = await roomRef.child(`players/${playerId}`).once('value');
     const existing = snap.val();
@@ -1340,6 +1344,9 @@ async function autoStartGame(data) {
 function renderRoomPlaying(data) {
     if (roomPlayingInitialized) return;
     if (!data.board) return;
+    // Ignore stale intermediate Firebase events where the round has already expired
+    const durationMs = (data.settings?.minutes || 3) * 60000;
+    if (data.startedAt && (data.startedAt + durationMs) < Date.now()) return;
     roomPlayingInitialized = true;
 
     showPanel('game');

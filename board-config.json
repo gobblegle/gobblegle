@@ -1,36 +1,9 @@
 {
-  "rows": 5,
-  "cols": 4,
+  "rows": 3,
+  "cols": 3,
   "cells": [
-    [
-      null,
-      null,
-      "P",
-      "E"
-    ],
-    [
-      null,
-      null,
-      "F",
-      null
-    ],
-    [
-      "O",
-      "E",
-      "M",
-      null
-    ],
-    [
-      "O",
-      "F",
-      "P",
-      "N"
-    ],
-    [
-      null,
-      null,
-      null,
-      "L"
-    ]
+    ["S","T","E"],
+    ["A","S","I"],
+    ["I","N","O"]
   ]
 }
