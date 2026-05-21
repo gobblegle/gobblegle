@@ -297,7 +297,7 @@
         <span id="room-score-display" style="font-size:0.95rem;font-weight:700;color:var(--text)">Score: 0</span>
     </div>
     <div class="current-word" id="word-preview"></div>
-    <div id="board-wrapper" style="position:relative;margin:0 auto;padding-top:34px;">
+    <div id="board-wrapper" style="position:relative;margin:0 auto;">
         <button id="rotate-btn" onclick="rotateBoard()" title="Rotate board 90°" style="position:absolute;top:0;right:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;color:var(--text-muted);opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'">↻</button>
         <div class="board-container" id="board-container">
             <svg class="svg-overlay" id="svg-overlay"></svg>
@@ -963,9 +963,25 @@ function updateCellSize() {
     document.documentElement.style.setProperty('--cell-size', `${cellSize}px`);
     document.documentElement.style.setProperty('--cell-font', `${fontSize}rem`);
 
+    // Wrapper is always a fixed square based on max(rows,cols) so it never resizes on rotation
     const fullGridW = dim * baseCellSize + (dim - 1) * gap;
+    const squareSz  = dim * cellSize + (dim - 1) * gap;
     const wrapper = document.getElementById('board-wrapper');
-    if (wrapper) wrapper.style.width = `${fullGridW}px`;
+    if (wrapper) {
+        wrapper.style.width  = `${fullGridW}px`;
+        wrapper.style.height = `${squareSz + 34}px`;
+    }
+
+    // Board-container sits absolutely, centered inside the square content area
+    const boardW = boardCols * cellSize + (boardCols - 1) * gap;
+    const boardH = boardRows * cellSize + (boardRows - 1) * gap;
+    const container = document.getElementById('board-container');
+    if (container) {
+        container.style.position = 'absolute';
+        container.style.margin   = '0';
+        container.style.left     = `${(fullGridW - boardW) / 2}px`;
+        container.style.top      = `${34 + (squareSz - boardH) / 2}px`;
+    }
 }
 
 let _resizeTimer;
@@ -975,14 +991,17 @@ window.addEventListener('resize', () => { clearTimeout(_resizeTimer); _resizeTim
 function rotateBoard() {
     const wrapper = document.getElementById('board-wrapper');
     if (wrapper?.dataset.rotating === 'true') return;
-    const container = document.getElementById('board-container');
     const grid = document.getElementById('grid');
     const cellSz = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--cell-size')) || 54;
 
+    // Fixed pivot = center of the max(rows,cols) virtual square, stable across all orientations
+    const gap      = 8;
+    const maxDim   = Math.max(boardRows, boardCols);
+    const squareSz = maxDim * cellSz + (maxDim - 1) * gap;
+    const wrapW    = parseFloat(wrapper.style.width) || wrapper.getBoundingClientRect().width;
+    const cx = wrapW / 2;
+    const cy = 34 + squareSz / 2;
     const wrapR = wrapper.getBoundingClientRect();
-    const conR  = container.getBoundingClientRect();
-    const cx = conR.left - wrapR.left + conR.width  / 2;
-    const cy = conR.top  - wrapR.top  + conR.height / 2;
 
     const layers = [];
     for (let r = 0; r < boardRows; r++) {
