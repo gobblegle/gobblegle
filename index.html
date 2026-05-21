@@ -373,7 +373,6 @@
         </div>
         <div class="scoreboard" id="scoreboard-body"></div>
         <button class="btn btn-full" onclick="closeScoreboard()" style="margin-top:4px">Close</button>
-        <button class="btn btn-outline btn-full" onclick="leaveRoom()">Leave Room</button>
     </div>
 
 </div>
@@ -1125,6 +1124,14 @@ async function initRoomMode(rid) {
     const savedName = localStorage.getItem('gob_name') || '';
     if (savedName) document.getElementById('player-name-input').value = savedName;
 
+    // Returning player: restore online status before listener fires
+    const roomData = snap.val();
+    const existingPlayer = roomData?.players?.[playerId];
+    if (existingPlayer && existingPlayer.online === false) {
+        await roomRef.child(`players/${playerId}`).update({ online: true, ready: false });
+        roomRef.child(`players/${playerId}/online`).onDisconnect().set(false);
+    }
+
     roomRef.on('value', snap => handleRoomUpdate(snap.val()));
 
     document.addEventListener('click', e => {
@@ -1147,9 +1154,17 @@ function handleRoomUpdate(data) {
             roomPlayingInitialized = false;
             scoreBoardShown = false;
         }
+        // Late joiner: not in player list yet — show lobby for name entry
+        if (!data.players?.[playerId]) {
+            showPanel('lobby');
+            renderLobby(data);
+            return;
+        }
         if (!roomPlayingInitialized && data.currentRound > roomLastPlayedRound) renderRoomPlaying(data);
     } else if (data.state === 'finished') {
-        if (data.players?.[playerId]?.closedScoreboard) {
+        const myPlayer = data.players?.[playerId];
+        const didPlayRound = myPlayer?.rounds?.[data.currentRound ?? 0] != null;
+        if (!didPlayRound || myPlayer?.closedScoreboard) {
             showPanel('lobby');
             renderLobby(data);
             checkAutoStart(data);
@@ -1161,8 +1176,10 @@ function handleRoomUpdate(data) {
 
 function checkAutoStart(data) {
     const players = data.players || {};
-    const arr = Object.entries(players).sort((a,b)=>(a[1].joined||0)-(b[1].joined||0));
-    if (arr.length > 0 && arr.every(([,p])=>p.ready) && arr[0][0] === playerId) {
+    const arr = Object.entries(players)
+        .filter(([,p]) => p.online !== false)
+        .sort((a,b) => (a[1].joined||0)-(b[1].joined||0));
+    if (arr.length > 0 && arr.every(([,p]) => p.ready) && arr[0][0] === playerId) {
         autoStartGame(data);
     }
 }
@@ -1171,10 +1188,10 @@ function checkAutoStart(data) {
 function renderLobby(data) {
     document.getElementById('lobby-code').textContent = roomId;
 
-    const players   = data.players || {};
-    const playerArr = Object.entries(players).sort((a,b)=>(a[1].joined||0)-(b[1].joined||0));
-    const hasJoined = !!players[playerId];
-    const myReady   = players[playerId]?.ready || false;
+    const players = data.players || {};
+    const myPlayer = players[playerId];
+    const hasJoined = !!myPlayer && myPlayer.online !== false;
+    const myReady   = myPlayer?.ready || false;
 
     document.getElementById('name-entry-card').style.display = hasJoined ? 'none' : '';
 
@@ -1183,17 +1200,27 @@ function renderLobby(data) {
     readyBtn.textContent = myReady ? 'Ready ✓' : "I'm Ready";
     readyBtn.className = 'btn btn-full' + (myReady ? ' btn-green' : '');
 
+    // Only show online players
+    const onlinePlayers = Object.entries(players).filter(([,p]) => p.online !== false);
+    // Host = earliest joined among online
+    const hostId = onlinePlayers.slice().sort((a,b) => (a[1].joined||0)-(b[1].joined||0))[0]?.[0];
+    // Display order: most game points first, then join order
+    const displayArr = onlinePlayers.slice().sort((a,b) =>
+        (b[1].gamePoints||0)-(a[1].gamePoints||0) || (a[1].joined||0)-(b[1].joined||0));
+
     const pl = document.getElementById('player-list');
     pl.innerHTML = '';
-    if (!playerArr.length) {
+    if (!displayArr.length) {
         pl.innerHTML = '<div class="hint">No players yet…</div>';
     } else {
-        playerArr.forEach(([pid,p],i) => {
+        displayArr.forEach(([pid,p]) => {
             const el=document.createElement('div');
             el.className='player-item'+(pid===playerId?' me':'');
-            const hostTag = i===0 ? ' <span style="font-size:.75rem;color:var(--text-muted);font-weight:400">(host)</span>' : '';
+            const hostTag = pid===hostId ? ' <span style="font-size:.75rem;color:var(--text-muted);font-weight:400">(host)</span>' : '';
+            const pts = p.gamePoints || 0;
+            const scoreTag = `<span style="font-size:.78rem;color:var(--text-muted);margin-left:4px">${pts} pt${pts!==1?'s':''}</span>`;
             const badge = `<span class="ready-badge ${p.ready?'yes':'no'}">${p.ready?'Ready':'Waiting'}</span>`;
-            el.innerHTML=`<span class="player-dot"></span>${p.name}${hostTag}${badge}`;
+            el.innerHTML=`<span class="player-dot"></span>${p.name||'?'}${hostTag}${scoreTag}${badge}`;
             pl.appendChild(el);
         });
     }
@@ -1218,7 +1245,14 @@ async function joinLobby() {
     const name = inp.value.trim();
     if (!name) { inp.focus(); return; }
     localStorage.setItem('gob_name', name);
-    await roomRef.child(`players/${playerId}`).set({ name, gamePoints: 0, joined: Date.now(), ready: false });
+    const snap = await roomRef.child(`players/${playerId}`).once('value');
+    const existing = snap.val();
+    if (existing) {
+        await roomRef.child(`players/${playerId}`).update({ name, online: true, ready: false });
+    } else {
+        await roomRef.child(`players/${playerId}`).set({ name, gamePoints: 0, joined: Date.now(), online: true, ready: false });
+    }
+    roomRef.child(`players/${playerId}/online`).onDisconnect().set(false);
     document.getElementById('name-entry-card').style.display = 'none';
 }
 
@@ -1514,7 +1548,13 @@ async function closeScoreboard() {
 }
 
 async function leaveRoom() {
-    if (roomRef) { try { roomRef.child(`players/${playerId}`).remove(); } catch {} roomRef.off(); roomRef=null; }
+    if (roomRef) {
+        try {
+            roomRef.child(`players/${playerId}/online`).onDisconnect().cancel();
+            await roomRef.child(`players/${playerId}`).update({ online: false, ready: false });
+        } catch {}
+        roomRef.off(); roomRef=null;
+    }
     if (roomCountdownInterval) { clearInterval(roomCountdownInterval); roomCountdownInterval=null; }
 
     // Reset room state
