@@ -1,9 +1,26 @@
 {
-  "rows": 3,
+  "rows": 4,
   "cols": 3,
   "cells": [
-    ["S","T","E"],
-    ["A","S","I"],
-    ["I","N","O"]
+    [
+      null,
+      "I",
+      null
+    ],
+    [
+      null,
+      "L",
+      null
+    ],
+    [
+      "V",
+      "E",
+      "D"
+    ],
+    [
+      null,
+      null,
+      "N"
+    ]
   ]
 }
