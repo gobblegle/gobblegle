@@ -493,50 +493,179 @@ function _pbTopologyOk(graph) {
     return true;
 }
 
-function _pbAssignLetters(graph) {
-    const VP = 'E'.repeat(13)+'A'.repeat(9)+'I'.repeat(9)+'O'.repeat(7)+'U'.repeat(3)+'Y'.repeat(3);
-    const CP = 'S'.repeat(10)+'T'.repeat(10)+'R'.repeat(10)+'N'.repeat(10)+'L'.repeat(10)+'D'.repeat(10)+'C'.repeat(6)+'M'.repeat(6)+'P'.repeat(6)+'G'.repeat(5)+'B'.repeat(4)+'H'.repeat(3)+'F'.repeat(3)+'W'.repeat(3)+'KK'+'VV'+'JQXZ';
-    const n = graph.length, vCount = Math.round(n * 0.38);
+// ── Morpheme-seeded letter assignment ──────────────────────────────────────
+// Suffix morphemes with weights — seeded onto high-degree paths so many word
+// stems can reach the morpheme's entry cell (capitalises on double-back paths).
+const _PB_SUFFIXES = [
+    ['ING',40],['ION',20],['EST',15],['ER',12],['ED',8],['LY',8],
+    ['TION',6],['NESS',6],['MENT',5],['ABLE',4],['OUS',3],['LESS',3]
+];
+// Prefix morphemes — seeded on larger boards where the last cell connects outward to stems.
+const _PB_PREFIXES = [['RE',25],['UN',18],['CON',12],['PRE',10],['OUT',8]];
 
-    // Repeat cap: no letter appears more than maxRep times (prevents TTTAAEE boards)
-    const maxRep = Math.max(1, Math.ceil(n / 8));
+function _pbWeightedPick(arr) {
+    let r = Math.random() * arr.reduce((s,[,w]) => s+w, 0);
+    for (const [v,w] of arr) { r -= w; if (r <= 0) return v; }
+    return arr[arr.length-1][0];
+}
+
+// Find up to MAX simple paths of length k in graph, avoiding excluded indices.
+// Returns paths sorted by total-degree score descending.
+function _pbFindPaths(graph, k, excluded) {
+    const paths = [], MAX = 200;
+    function dfs(path, vis) {
+        if (paths.length >= MAX) return;
+        if (path.length === k) {
+            paths.push({ nodes:[...path], score: path.reduce((s,i) => s+graph[i].neighbors.length, 0) });
+            return;
+        }
+        for (const ni of graph[path[path.length-1]].neighbors) {
+            if (!vis.has(ni) && !excluded.has(ni)) {
+                vis.add(ni); path.push(ni); dfs(path, vis); path.pop(); vis.delete(ni);
+                if (paths.length >= MAX) return;
+            }
+        }
+    }
+    for (let i = 0; i < graph.length && paths.length < MAX; i++)
+        if (!excluded.has(i)) dfs([i], new Set([i]));
+    paths.sort((a,b) => b.score - a.score);
+    return paths;
+}
+
+// Main letter assignment: seed morphemes onto high-connectivity paths, then
+// fill remaining cells by structural role (hub / mid / leaf).
+function _pbSeedAndFill(graph) {
+    const locked = new Set(), n = graph.length;
+    const isV = c => 'AEIOU'.includes(c);
+
+    // ── QU unit (15% chance on boards ≥ 8 cells) ─────────────────────
+    // Treat QU as a single seeded unit on a well-connected edge so QUITE,
+    // QUEEN, QUEST, etc. are reachable from multiple directions.
+    if (n >= 8 && Math.random() < 0.15) {
+        const edges = [];
+        for (let i = 0; i < n; i++) {
+            if (graph[i].neighbors.length < 3) continue;
+            for (const j of graph[i].neighbors)
+                if (j > i && graph[j].neighbors.length >= 2)
+                    edges.push([i, j, graph[i].neighbors.length + graph[j].neighbors.length]);
+        }
+        if (edges.length) {
+            edges.sort((a,b) => b[2]-a[2]);
+            const [qi, ui] = edges[Math.random() * Math.min(3, edges.length) | 0];
+            graph[qi].letter = 'Q'; graph[ui].letter = 'U'; graph[ui].isQU = true;
+            locked.add(qi); locked.add(ui);
+        }
+    }
+
+    // ── Suffix seed ───────────────────────────────────────────────────
+    // First morpheme letter (e.g. 'I' in ING) goes on the path cell with the
+    // most external (non-path) neighbors, so the largest variety of stems can
+    // lead into the morpheme.
+    const sfx = _PB_SUFFIXES.filter(([s]) => s.length <= n - locked.size - 3);
+    if (sfx.length) {
+        const m = _pbWeightedPick(sfx);
+        const paths = _pbFindPaths(graph, m.length, locked);
+        if (paths.length) {
+            const pick = paths[Math.random() * Math.min(4, paths.length) | 0].nodes;
+            const pset = new Set(pick);
+            const ext = i => graph[i].neighbors.filter(ni => !pset.has(ni)).length;
+            const rev = [...pick].reverse();
+            const ord = ext(rev[0]) > ext(pick[0]) ? rev : pick;
+            for (let j = 0; j < m.length; j++) { graph[ord[j]].letter = m[j]; locked.add(ord[j]); }
+        }
+    }
+
+    // ── Prefix seed (boards ≥ 14 cells) ──────────────────────────────
+    // Last morpheme letter (e.g. 'E' in RE) goes on the cell with the most
+    // external neighbors, so the word stems after the prefix can branch widely.
+    if (n >= 14 && n - locked.size >= 8) {
+        const pfx = _PB_PREFIXES.filter(([p]) => p.length <= n - locked.size - 4);
+        if (pfx.length) {
+            const m = _pbWeightedPick(pfx);
+            const paths = _pbFindPaths(graph, m.length, locked);
+            if (paths.length) {
+                const pick = paths[Math.random() * Math.min(4, paths.length) | 0].nodes;
+                const pset = new Set(pick);
+                const ext = i => graph[i].neighbors.filter(ni => !pset.has(ni)).length;
+                const rev = [...pick].reverse();
+                const k = m.length - 1;
+                const ord = ext(rev[k]) > ext(pick[k]) ? rev : pick;
+                for (let j = 0; j < m.length; j++) { graph[ord[j]].letter = m[j]; locked.add(ord[j]); }
+            }
+        }
+    }
+
+    // ── Topology-aware fill for remaining cells ───────────────────────
+    // Hub cells (high degree) get high-frequency word-building letters.
+    // Leaf cells (degree 1) get common word-ending letters.
+    const VP = 'EEEEEEEEEEEEAAAAAAAIIIIIIIOOOOOOUUUYYY';
+    const HD = 'SSSSSTTTTTRRRRRNNNNNDDDDDLLLLLCCCCMMMPPP'; // hub consonants
+    const MD = 'SSTTRRNNDLCMBPGWF';                        // mid-degree
+    const LF = 'SSSSDDRRYNNTLL';                           // leaf endings
+
+    const unlocked = [];
+    for (let i = 0; i < n; i++) if (!locked.has(i)) unlocked.push(i);
+    unlocked.sort((a,b) => graph[b].neighbors.length - graph[a].neighbors.length);
+
+    const maxRep = Math.max(1, Math.ceil(n / 7));
     const counts = {};
+    for (const i of locked) { const ch = graph[i].letter; counts[ch] = (counts[ch]||0) + 1; }
+
     const draw = pool => {
-        for (let t=0; t<40; t++) {
+        for (let t = 0; t < 50; t++) {
             const ch = pool[Math.random()*pool.length|0];
             if ((counts[ch]||0) < maxRep) { counts[ch]=(counts[ch]||0)+1; return ch; }
         }
-        return pool[Math.random()*pool.length|0]; // fallback if all capped
+        return pool[Math.random()*pool.length|0];
     };
 
-    const idxs = Array.from({length:n},(_,i)=>i);
-    for (let i=n-1;i>0;i--) { const j=Math.random()*i|0; [idxs[i],idxs[j]]=[idxs[j],idxs[i]]; }
-    const vowelSet = new Set(idxs.slice(0, vCount));
-    for (let i=0;i<n;i++) graph[i].letter = vowelSet.has(i) ? draw(VP) : draw(CP);
+    let vCount = [...locked].filter(i => isV(graph[i].letter)).length;
+    const targetV = Math.round(n * 0.40);
+    const topN = Math.ceil(unlocked.length * 0.35);
 
-    // Q-U cascade: Q is only kept on high-connectivity nodes (degree >= 3)
-    const safeConsonants = 'STNRLDCGMP';
-    for (const node of graph) {
-        if (node.letter !== 'Q') continue;
-        if (node.neighbors.length < 3) {
-            node.letter = safeConsonants[Math.random()*safeConsonants.length|0];
-            continue;
-        }
-        const nbs = node.neighbors.map(ni => graph[ni]);
-        let t = nbs.find(nb => 'AEIOU'.includes(nb.letter));
-        if (!t && nbs.length) t = nbs[Math.random()*nbs.length|0];
-        if (t) { t.letter = 'U'; t.isQU = true; }
+    for (let rank = 0; rank < unlocked.length; rank++) {
+        const i = unlocked[rank];
+        const deg = graph[i].neighbors.length;
+        // Bias toward a vowel if we're behind target, or if locked neighbors are all consonants
+        const consonantCluster = graph[i].neighbors.filter(ni => locked.has(ni)).every(ni => !isV(graph[ni].letter));
+        const wantV = vCount < targetV && (consonantCluster || Math.random() < 0.42);
+        let letter;
+        if (wantV)         { letter = draw(VP); if (isV(letter)) vCount++; }
+        else if (deg === 1) { letter = draw(LF); }
+        else if (rank < topN){ letter = draw(HD); }
+        else                { letter = draw(MD); }
+        graph[i].letter = letter;
+        locked.add(i);
     }
 
-    const friendly = new Set('STNRLDCGMPWBFH');
-    for (const node of graph)
-        if (node.neighbors.length === 1 && !'AEIOU'.includes(node.letter) && !friendly.has(node.letter))
-            node.letter = VP[Math.random()*VP.length|0];
+    // ── Vowel coverage pass ───────────────────────────────────────────
+    // Ensure every consonant has at least one adjacent vowel. Convert the
+    // lowest-degree neighbor that isn't QU.
+    for (let i = 0; i < n; i++) {
+        if (isV(graph[i].letter) || graph[i].isQU) continue;
+        if (graph[i].neighbors.some(ni => isV(graph[ni].letter))) continue;
+        if (!graph[i].neighbors.length) continue;
+        const cands = graph[i].neighbors
+            .filter(ni => !graph[ni].isQU)
+            .sort((a,b) => graph[a].neighbors.length - graph[b].neighbors.length);
+        if (cands.length) graph[cands[0]].letter = 'EAIO'[Math.random()*4|0];
+    }
 
-    for (const node of graph) {
-        if (node.letter !== 'J' && node.letter !== 'K') continue;
-        if (node.neighbors.length > 0 && !node.neighbors.some(ni => 'AEIOU'.includes(graph[ni].letter)))
-            graph[node.neighbors[Math.random()*node.neighbors.length|0]].letter = VP[Math.random()*VP.length|0];
+    // ── Rare letter cleanup ───────────────────────────────────────────
+    const safe = 'STNRLDCGMP';
+    for (let i = 0; i < n; i++) {
+        const nd = graph[i];
+        if (nd.isQU) continue;
+        // J/X/Z/V on a leaf or without adjacent vowel → replace
+        if ('JXZV'.includes(nd.letter) &&
+            (nd.neighbors.length <= 1 || !nd.neighbors.some(ni => isV(graph[ni].letter))))
+            nd.letter = safe[Math.random()*safe.length|0];
+        // J/K must have adjacent vowel to form words; if not, give one to a neighbor
+        if ('JK'.includes(nd.letter) && !nd.neighbors.some(ni => isV(graph[ni].letter))) {
+            const cands = nd.neighbors.filter(ni => !graph[ni].isQU);
+            if (cands.length)
+                graph[cands[Math.random()*cands.length|0]].letter = 'EAIO'[Math.random()*4|0];
+        }
     }
 }
 
@@ -596,6 +725,33 @@ function _pbValidateRepair(graph, trie) {
     return _pbFindCovered(graph, trie).size === graph.length;
 }
 
+// Count distinct valid words reachable via standard (no-revisit) DFS.
+// Conservative vs. the game's double-back rules, so boards that pass the
+// threshold will always have MORE findable words than counted here.
+function _pbCountWords(graph, trie) {
+    const words = new Set(), CAP = 500;
+    function dfs(ni, trNode, word, vis) {
+        if (words.size >= CAP) return;
+        const next = trNode[graph[ni].letter];
+        if (!next) return;
+        vis.add(ni); word.push(graph[ni].letter);
+        if (word.length >= 4 && next.$) words.add(word.join(''));
+        if (word.length < 10 && words.size < CAP)
+            for (const nni of graph[ni].neighbors) if (!vis.has(nni)) dfs(nni, next, word, vis);
+        word.pop(); vis.delete(ni);
+    }
+    for (let i = 0; i < graph.length && words.size < CAP; i++) dfs(i, trie, [], new Set());
+    return words.size;
+}
+
+function _pbMinWords(n) {
+    if (n <= 8)  return 10;
+    if (n <= 11) return 18;
+    if (n <= 14) return 28;
+    if (n <= 17) return 40;
+    return 55;
+}
+
 function _pbToBoard(graph) {
     let minR=Infinity, maxR=-Infinity, minC=Infinity, maxC=-Infinity;
     for (const nd of graph) {
@@ -627,23 +783,35 @@ function _pbBuildRectGraph(rows, cols) {
 
 function generateShapedBoard(rows, cols) {
     const trie = _pbGetTrie();
-    const graph = _pbBuildRectGraph(rows, cols);
-    _pbAssignLetters(graph);
-    _pbValidateRepair(graph, trie);
-    const cells = Array.from({length:rows}, (_,r) =>
-        Array.from({length:cols}, (_,c) => graph[r*cols+c].letter));
-    return { rows, cols, cells };
+    const minW = _pbMinWords(rows * cols);
+    let bestBoard = null, bestCount = 0;
+    for (let attempt = 0; attempt < 10; attempt++) {
+        const graph = _pbBuildRectGraph(rows, cols);
+        _pbSeedAndFill(graph);
+        _pbValidateRepair(graph, trie);
+        const count = _pbCountWords(graph, trie);
+        const cells = Array.from({length:rows}, (_,r) =>
+            Array.from({length:cols}, (_,c) => graph[r*cols+c].letter));
+        const board = { rows, cols, cells };
+        if (count > bestCount) { bestCount = count; bestBoard = board; }
+        if (count >= minW) break;
+    }
+    return bestBoard;
 }
 
 function generateProceduralBoard() {
     const trie = _pbGetTrie();
-    for (let attempt=0; attempt<200; attempt++) {
+    let bestBoard = null, bestCount = 0;
+    for (let attempt = 0; attempt < 20; attempt++) {
         const graph = _pbGrowShape(_pbGaussian(9, 3));
         if (!_pbTopologyOk(graph)) continue;
-        _pbAssignLetters(graph);
-        if (_pbValidateRepair(graph, trie)) return _pbToBoard(graph);
+        _pbSeedAndFill(graph);
+        _pbValidateRepair(graph, trie);
+        const count = _pbCountWords(graph, trie);
+        if (count > bestCount) { bestCount = count; bestBoard = _pbToBoard(graph); }
+        if (count >= _pbMinWords(graph.length)) break;
     }
-    return generateBoard(4, 4, Math.random);
+    return bestBoard || generateShapedBoard(4, 4);
 }
 
 function generateRoomId() {
