@@ -179,6 +179,7 @@
         <div class="status" id="status"></div>
         <div class="actions">
             <button class="btn btn-sec" onclick="generateRandom()">Generate Random</button>
+            <button class="btn btn-sec" onclick="fillRandom()">Fill Random</button>
             <button class="btn btn-sec" onclick="clearAll()">Clear</button>
             <button class="btn" id="push-btn" onclick="pushBoard()">Push to GitHub</button>
         </div>
@@ -524,6 +525,137 @@ function _edToBoard(graph) {
     const lookup=new Map(graph.map(nd=>[(nd.coord.r-minR)*cols+(nd.coord.c-minC),nd.letter]));
     const cells=Array.from({length:rows},(_,r)=>Array.from({length:cols},(_,c)=>{const k=r*cols+c;return lookup.has(k)?lookup.get(k):null;}));
     return{rows,cols,cells};
+}
+
+// ── Fill Random: morpheme-seeded fill of the current ROW×COL grid ──────────
+function _edBuildRectGraph(rows, cols) {
+    const nodes=[], idxOf=new Map();
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+        idxOf.set(r*cols+c, nodes.length);
+        nodes.push({coord:{r,c}, letter:'', neighbors:[]});
+    }
+    for(const node of nodes){
+        const{r,c}=node.coord;
+        for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
+            if(!dr&&!dc) continue;
+            const nr=r+dr,nc=c+dc;
+            if(nr>=0&&nr<rows&&nc>=0&&nc<cols) node.neighbors.push(idxOf.get(nr*cols+nc));
+        }
+    }
+    return nodes;
+}
+
+function _edFindPaths(graph, k, excluded) {
+    const paths=[], MAX=200;
+    function dfs(path, vis){
+        if(paths.length>=MAX) return;
+        if(path.length===k){paths.push({nodes:[...path],score:path.reduce((s,i)=>s+graph[i].neighbors.length,0)});return;}
+        for(const ni of graph[path[path.length-1]].neighbors){
+            if(!vis.has(ni)&&!excluded.has(ni)){
+                vis.add(ni);path.push(ni);dfs(path,vis);path.pop();vis.delete(ni);
+                if(paths.length>=MAX) return;
+            }
+        }
+    }
+    for(let i=0;i<graph.length&&paths.length<MAX;i++) if(!excluded.has(i)) dfs([i],new Set([i]));
+    paths.sort((a,b)=>b.score-a.score);
+    return paths;
+}
+
+function _edWeightedPick(arr){
+    let r=Math.random()*arr.reduce((s,[,w])=>s+w,0);
+    for(const[v,w]of arr){r-=w;if(r<=0)return v;}
+    return arr[arr.length-1][0];
+}
+
+const _ED_SUFFIXES=[['ING',40],['ION',20],['EST',15],['ER',12],['ED',8],['LY',8],
+    ['TION',6],['NESS',6],['MENT',5],['ABLE',4],['OUS',3],['LESS',3]];
+const _ED_PREFIXES=[['RE',25],['UN',18],['CON',12],['PRE',10],['OUT',8]];
+
+function _edSeedAndFill(graph) {
+    const locked=new Set(), n=graph.length;
+    const isV=c=>'AEIOU'.includes(c);
+
+    // Suffix seed — first morpheme letter gets cell with most external neighbors
+    const sfx=_ED_SUFFIXES.filter(([s])=>s.length<=n-locked.size-3);
+    if(sfx.length){
+        const m=_edWeightedPick(sfx);
+        const paths=_edFindPaths(graph,m.length,locked);
+        if(paths.length){
+            const pick=paths[Math.random()*Math.min(4,paths.length)|0].nodes;
+            const pset=new Set(pick);
+            const ext=i=>graph[i].neighbors.filter(ni=>!pset.has(ni)).length;
+            const rev=[...pick].reverse();
+            const ord=ext(rev[0])>ext(pick[0])?rev:pick;
+            for(let j=0;j<m.length;j++){graph[ord[j]].letter=m[j];locked.add(ord[j]);}
+        }
+    }
+
+    // Prefix seed on larger boards
+    if(n>=14&&n-locked.size>=8){
+        const pfx=_ED_PREFIXES.filter(([p])=>p.length<=n-locked.size-4);
+        if(pfx.length){
+            const m=_edWeightedPick(pfx);
+            const paths=_edFindPaths(graph,m.length,locked);
+            if(paths.length){
+                const pick=paths[Math.random()*Math.min(4,paths.length)|0].nodes;
+                const pset=new Set(pick);
+                const ext=i=>graph[i].neighbors.filter(ni=>!pset.has(ni)).length;
+                const rev=[...pick].reverse(), k=m.length-1;
+                const ord=ext(rev[k])>ext(pick[k])?rev:pick;
+                for(let j=0;j<m.length;j++){graph[ord[j]].letter=m[j];locked.add(ord[j]);}
+            }
+        }
+    }
+
+    // Topology-aware fill: hubs get high-freq consonants, leaves get word-ending letters
+    const VP='EEEEEEEEEEEEAAAAAAAIIIIIIIOOOOOOUUUYYY';
+    const HD='SSSSSTTTTTRRRRRNNNNNDDDDDLLLLLCCCCMMMPPP';
+    const MD='SSTTRRNNDLCMBPGWF';
+    const LF='SSSSDDRRYNNTLL';
+    const unlocked=[];
+    for(let i=0;i<n;i++) if(!locked.has(i)) unlocked.push(i);
+    unlocked.sort((a,b)=>graph[b].neighbors.length-graph[a].neighbors.length);
+    const maxRep=Math.max(1,Math.ceil(n/7));
+    const counts={};
+    for(const i of locked){const ch=graph[i].letter;counts[ch]=(counts[ch]||0)+1;}
+    const draw=pool=>{
+        for(let t=0;t<50;t++){const ch=pool[Math.random()*pool.length|0];if((counts[ch]||0)<maxRep){counts[ch]=(counts[ch]||0)+1;return ch;}}
+        return pool[Math.random()*pool.length|0];
+    };
+    let vCount=[...locked].filter(i=>isV(graph[i].letter)).length;
+    const targetV=Math.round(n*0.40), topN=Math.ceil(unlocked.length*0.35);
+    for(let rank=0;rank<unlocked.length;rank++){
+        const i=unlocked[rank], deg=graph[i].neighbors.length;
+        const clusterC=graph[i].neighbors.filter(ni=>locked.has(ni)).every(ni=>!isV(graph[ni].letter));
+        const wantV=vCount<targetV&&(clusterC||Math.random()<0.42);
+        let letter;
+        if(wantV){letter=draw(VP);if(isV(letter))vCount++;}
+        else if(deg===1){letter=draw(LF);}
+        else if(rank<topN){letter=draw(HD);}
+        else{letter=draw(MD);}
+        graph[i].letter=letter; locked.add(i);
+    }
+    // Vowel coverage: every consonant gets at least one adjacent vowel
+    for(let i=0;i<n;i++){
+        if(isV(graph[i].letter)) continue;
+        if(graph[i].neighbors.some(ni=>isV(graph[ni].letter))) continue;
+        if(!graph[i].neighbors.length) continue;
+        const cands=graph[i].neighbors.slice().sort((a,b)=>graph[a].neighbors.length-graph[b].neighbors.length);
+        if(cands.length) graph[cands[0]].letter='EAIO'[Math.random()*4|0];
+    }
+}
+
+function fillRandom() {
+    const graph=_edBuildRectGraph(editorRows, editorCols);
+    _edSeedAndFill(graph);
+    const inputs=document.getElementById('editor-table').querySelectorAll('input');
+    for(let r=0;r<editorRows;r++) for(let c=0;c<editorCols;c++){
+        const inp=inputs[r*editorCols+c];
+        if(inp) inp.value=graph[r*editorCols+c].letter;
+    }
+    clearStatus();
+    scheduleWordCount();
 }
 
 function generateRandom() {

@@ -301,7 +301,10 @@
         <svg class="svg-overlay" id="svg-overlay"></svg>
         <div class="grid" id="grid"></div>
     </div>
-    <div class="timer" id="timer-display">00:00</div>
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px">
+        <div class="timer" id="timer-display">00:00</div>
+        <button onclick="rotateBoard()" title="Rotate board 90°" style="background:none;border:none;cursor:pointer;padding:2px 4px;font-size:1.45rem;line-height:1;color:var(--text-muted);opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'">↻</button>
+    </div>
 </div>
 
 <div class="room-overlay" id="room-overlay">
@@ -941,8 +944,9 @@ function updateCellSize() {
     const availW = Math.min(window.innerWidth - 32, 508);
 
     const gap = 8;
-    const cellFromH = (availH - (boardRows - 1) * gap) / boardRows;
-    const cellFromW = (availW - (boardCols - 1) * gap) / boardCols;
+    const dim = Math.max(boardRows, boardCols); // keep tile size stable across rotations
+    const cellFromH = (availH - (dim - 1) * gap) / dim;
+    const cellFromW = (availW - (dim - 1) * gap) / dim;
     const cellSize  = Math.max(32, Math.floor(Math.min(cellFromH, cellFromW)));
     const fontSize  = Math.max(0.8, cellSize / 29);
 
@@ -952,6 +956,18 @@ function updateCellSize() {
 
 let _resizeTimer;
 window.addEventListener('resize', () => { clearTimeout(_resizeTimer); _resizeTimer = setTimeout(updateCellSize, 80); });
+
+// ── Board rotation ────────────────────────────────────────────────────────
+function rotateBoard() {
+    const oldRows = boardRows, oldCols = boardCols;
+    // 90° clockwise: newCells[newR][newC] = oldCells[oldRows-1-newC][newR]
+    const newCells = Array.from({length: oldCols}, (_, newR) =>
+        Array.from({length: oldRows}, (_, newC) => boardCells[oldRows-1-newC]?.[newR] ?? null));
+    boardRows = oldCols; boardCols = oldRows; boardCells = newCells;
+    clearPathUI();
+    updateCellSize();
+    renderBoard();
+}
 
 // ── Board rendering ────────────────────────────────────────────────────────
 function renderBoard() {
