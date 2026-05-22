@@ -709,8 +709,8 @@ function _pbCanCoverNode(nodeIdx, graph, trie) {
 }
 
 function _pbValidateRepair(graph, trie) {
-    const baseRepairs = ['E','A','T','S','R','I','N','O'];
-    for (let iter=0; iter<50; iter++) {
+    const allLetters = 'EAIOSTRNDLCUMPGHBYWFKVXZJQ'.split('');
+    for (let iter=0; iter<80; iter++) {
         const covered = _pbFindCovered(graph, trie);
         if (covered.size === graph.length) return true;
         let changed = false;
@@ -720,8 +720,7 @@ function _pbValidateRepair(graph, trie) {
             if (node.isQU) continue;
             const orig = node.letter;
             let fixed = false;
-            // Shuffle repair order per node to prevent E/A/T dominance in repaired boards
-            const repairs = [...baseRepairs].sort(() => Math.random()-0.5);
+            const repairs = [...allLetters].sort(() => Math.random()-0.5);
             for (const rep of repairs) {
                 if (rep === orig) continue;
                 node.letter = rep;
@@ -795,10 +794,10 @@ function generateShapedBoard(rows, cols) {
     const trie = _pbGetTrie();
     const minW = _pbMinWords(rows * cols);
     let bestBoard = null, bestCount = 0;
-    for (let attempt = 0; attempt < 10; attempt++) {
+    for (let attempt = 0; attempt < 20; attempt++) {
         const graph = _pbBuildRectGraph(rows, cols);
         _pbSeedAndFill(graph);
-        _pbValidateRepair(graph, trie);
+        if (!_pbValidateRepair(graph, trie)) continue;
         const count = _pbCountWords(graph, trie);
         const cells = Array.from({length:rows}, (_,r) =>
             Array.from({length:cols}, (_,c) => graph[r*cols+c].letter));
@@ -816,7 +815,7 @@ function generateProceduralBoard(minWords) {
         const graph = _pbGrowShape(_pbGaussian(9, 3));
         if (!_pbTopologyOk(graph)) continue;
         _pbSeedAndFill(graph);
-        _pbValidateRepair(graph, trie);
+        if (!_pbValidateRepair(graph, trie)) continue;
         const count = _pbCountWords(graph, trie);
         if (count > bestCount) { bestCount = count; bestBoard = _pbToBoard(graph); }
         if (count >= (minWords || _pbMinWords(graph.length))) break;
@@ -864,6 +863,13 @@ function processDictText(text) {
 
 // ── Board config (solo daily board) ───────────────────────────────────────
 async function loadBoardConfig() {
+    try {
+        if (db) {
+            const snap = await db.ref('boardConfig').once('value');
+            const cfg = snap.val();
+            if (cfg) { boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells; return; }
+        }
+    } catch {}
     try {
         const res = await fetch('./board-config.json', { cache: 'no-store' });
         if (!res.ok) throw new Error();

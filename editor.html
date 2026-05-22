@@ -121,6 +121,8 @@
         .word-chips { display: flex; flex-wrap: wrap; gap: 4px 10px; }
         .word-chip  { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text); }
     </style>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 </head>
 <body>
 
@@ -133,33 +135,6 @@
 </header>
 
 <div class="page">
-
-    <div class="card">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-            <div class="card-title">GitHub Settings</div>
-            <span class="gh-saved-indicator" id="gh-saved">Saved</span>
-        </div>
-        <div>
-            <label class="field-label" for="gh-repo">Repository (owner/repo-name)</label>
-            <input class="field-input" type="text" id="gh-repo" placeholder="e.g. tom/gobblegle" autocomplete="off" spellcheck="false">
-        </div>
-        <div>
-            <label class="field-label" for="gh-token">Personal Access Token</label>
-            <input class="field-input" type="password" id="gh-token" placeholder="ghp_…" autocomplete="off" spellcheck="false">
-        </div>
-        <div>
-            <label class="field-label" for="gh-branch">Branch</label>
-            <input class="field-input" type="text" id="gh-branch" placeholder="main" autocomplete="off" spellcheck="false">
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-            <p class="hint">
-                Token needs <b>Contents: Read &amp; Write</b>.<br>
-                GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens.<br>
-                Branch is the one GitHub Pages serves from (usually <b>main</b> or <b>gh-pages</b>).
-            </p>
-            <button class="btn" onclick="saveGhSettings()">Save</button>
-        </div>
-    </div>
 
     <div class="card">
         <div class="card-title">Grid</div>
@@ -192,7 +167,7 @@
             <button class="btn btn-sec" onclick="generateRandom()">Generate Random</button>
             <button class="btn btn-sec" onclick="fillRandom()">Fill Random</button>
             <button class="btn btn-sec" onclick="clearAll()">Clear</button>
-            <button class="btn" id="push-btn" onclick="pushBoard()">Push to GitHub</button>
+            <button class="btn" id="save-btn" onclick="saveBoard()">Save Board</button>
         </div>
         <div id="word-list-container" style="display:none;"></div>
     </div>
@@ -202,14 +177,31 @@
 <script>
 let editorRows = 5, editorCols = 5;
 
+const firebaseConfig = {
+    apiKey: "AIzaSyC5l8bUB0Yf4SofYtIl0l3vQY8qw3wVflA",
+    authDomain: "gobblegle.firebaseapp.com",
+    databaseURL: "https://gobblegle-default-rtdb.firebaseio.com",
+    projectId: "gobblegle",
+    storageBucket: "gobblegle.firebasestorage.app",
+    messagingSenderId: "84213433658",
+    appId: "1:84213433658:web:43cff77a4b1f48049ded01"
+};
+let db = null;
+try { firebase.initializeApp(firebaseConfig); db = firebase.database(); } catch(e) {}
+
 window.addEventListener('DOMContentLoaded', async () => {
-    loadGhSettings();
+    try {
+        if (db) {
+            const snap = await db.ref('boardConfig').once('value');
+            const cfg = snap.val();
+            if (cfg) { editorRows = cfg.rows; editorCols = cfg.cols; buildEditorTable(false, cfg.cells); return; }
+        }
+    } catch {}
     try {
         const res = await fetch('./board-config.json', { cache: 'no-store' });
         if (res.ok) {
             const cfg = await res.json();
-            editorRows = cfg.rows;
-            editorCols = cfg.cols;
+            editorRows = cfg.rows; editorCols = cfg.cols;
             buildEditorTable(false, cfg.cells);
             return;
         }
@@ -217,83 +209,24 @@ window.addEventListener('DOMContentLoaded', async () => {
     buildEditorTable(false, null);
 });
 
-// ── GitHub Settings ────────────────────────────────────────────────────────
-function loadGhSettings() {
-    const repo   = localStorage.getItem('gh_repo')   || '';
-    const token  = localStorage.getItem('gh_token')  || '';
-    const branch = localStorage.getItem('gh_branch') || '';
-    document.getElementById('gh-repo').value   = repo;
-    document.getElementById('gh-token').value  = token;
-    document.getElementById('gh-branch').value = branch;
-    if (repo && token) document.getElementById('gh-saved').classList.add('visible');
-}
+// ── Save Board to Firebase ─────────────────────────────────────────────────
 
-function saveGhSettings() {
-    const repo   = document.getElementById('gh-repo').value.trim();
-    const token  = document.getElementById('gh-token').value.trim();
-    const branch = document.getElementById('gh-branch').value.trim() || 'main';
-    if (!repo || !token) { alert('Please enter both the repo and token.'); return; }
-    localStorage.setItem('gh_repo',   repo);
-    localStorage.setItem('gh_token',  token);
-    localStorage.setItem('gh_branch', branch);
-    const ind = document.getElementById('gh-saved');
-    ind.classList.add('visible');
-    ind.textContent = 'Saved ✓';
-    setTimeout(() => { ind.textContent = 'Saved'; }, 2000);
-}
-
-// ── Push to GitHub ─────────────────────────────────────────────────────────
-async function pushBoard() {
+async function saveBoard() {
     const { cells, hasAny } = readCells();
     if (!hasAny) { showStatus('Please enter at least one letter.', 'err'); return; }
     if (!isConnected(cells, editorRows, editorCols)) {
         showStatus('Letters are not all connected — every cell must touch at least one other.', 'err');
         return;
     }
-
-    const repo   = localStorage.getItem('gh_repo')   || '';
-    const token  = localStorage.getItem('gh_token')  || '';
-    const branch = localStorage.getItem('gh_branch') || 'main';
-    if (!repo || !token) {
-        showStatus('Save your GitHub repo and token in the settings above first.', 'err');
-        return;
-    }
-
-    const config  = { rows: editorRows, cols: editorCols, cells };
-    const content = btoa(unescape(encodeURIComponent(JSON.stringify(config, null, 2))));
-    const apiUrl  = `https://api.github.com/repos/${repo}/contents/board-config.json`;
-    const headers = {
-        'Authorization': `Bearer ${token}`,
-        'Accept': 'application/vnd.github+json',
-        'Content-Type': 'application/json'
-    };
-
-    const btn = document.getElementById('push-btn');
+    if (!db) { showStatus('Firebase not connected.', 'err'); return; }
+    const btn = document.getElementById('save-btn');
     btn.disabled = true;
-    showStatus('Pushing to GitHub…', 'info');
-
-    let sha = null;
+    showStatus('Saving…', 'info');
     try {
-        const getRes = await fetch(`${apiUrl}?ref=${branch}`, { headers, cache: 'no-store' });
-        if (getRes.ok) sha = (await getRes.json()).sha;
-        else if (getRes.status !== 404) throw new Error(`${getRes.status} — check repo name and branch`);
-    } catch (e) {
-        btn.disabled = false;
-        showStatus(`Could not reach GitHub: ${e.message}`, 'err');
-        return;
-    }
-
-    try {
-        const body = { message: 'Update board config', content, branch, ...(sha ? { sha } : {}) };
-        const putRes = await fetch(apiUrl, { method: 'PUT', headers, body: JSON.stringify(body) });
-        if (putRes.ok) {
-            showStatus('Pushed! Hard-refresh the game in a minute (Ctrl+Shift+R / Cmd+Shift+R) to see the new board.', 'ok');
-        } else {
-            const err = await putRes.json().catch(() => ({}));
-            showStatus(`GitHub error: ${err.message || putRes.status}`, 'err');
-        }
-    } catch (e) {
-        showStatus('Push failed. Check your connection.', 'err');
+        await db.ref('boardConfig').set({ rows: editorRows, cols: editorCols, cells });
+        showStatus('Board saved! Refresh the game to see the new board.', 'ok');
+    } catch(e) {
+        showStatus(`Save failed: ${e.message}`, 'err');
     }
     btn.disabled = false;
 }
@@ -560,6 +493,71 @@ function _edAssignLetters(graph) {
     }
 }
 
+let _edTrie = null;
+function _edGetTrie() {
+    if (_edTrie) return _edTrie;
+    if (!edDict) return null;
+    const root = {};
+    for (const word of edDict) {
+        let node = root;
+        for (const ch of word) { node[ch] = node[ch] || {}; node = node[ch]; }
+        node.$ = true;
+    }
+    return _edTrie = root;
+}
+function _edFindCovered(graph, trie) {
+    const n=graph.length, covered=new Set();
+    function dfs(ni, trNode, depth, vis){
+        if(vis.has(ni)) return;
+        const next=trNode[graph[ni].letter];
+        if(!next) return;
+        vis.add(ni);
+        if(depth>=4&&next.$) for(const idx of vis) covered.add(idx);
+        if(depth<18&&covered.size<n) for(const nni of graph[ni].neighbors) dfs(nni,next,depth+1,vis);
+        vis.delete(ni);
+    }
+    for(let i=0;i<n&&covered.size<n;i++) dfs(i,trie,1,new Set());
+    return covered;
+}
+function _edCanCoverNode(nodeIdx, graph, trie) {
+    function dfs(ni, trNode, depth, vis){
+        if(vis.has(ni)) return false;
+        const next=trNode[graph[ni].letter];
+        if(!next) return false;
+        vis.add(ni);
+        if(depth>=4&&next.$&&vis.has(nodeIdx)){vis.delete(ni);return true;}
+        if(depth<18) for(const nni of graph[ni].neighbors) if(dfs(nni,next,depth+1,vis)){vis.delete(ni);return true;}
+        vis.delete(ni); return false;
+    }
+    for(let i=0;i<graph.length;i++) if(dfs(i,trie,1,new Set())) return true;
+    return false;
+}
+function _edValidateRepair(graph, trie) {
+    if(!trie) return true;
+    const allLetters='EAIOSTRNDLCUMPGHBYWFKVJQ'.split('');
+    for(let iter=0;iter<80;iter++){
+        const covered=_edFindCovered(graph,trie);
+        if(covered.size===graph.length) return true;
+        let changed=false;
+        for(let i=0;i<graph.length;i++){
+            if(covered.has(i)) continue;
+            const node=graph[i];
+            const orig=node.letter;
+            let fixed=false;
+            const repairs=[...allLetters].sort(()=>Math.random()-0.5);
+            for(const rep of repairs){
+                if(rep===orig) continue;
+                node.letter=rep;
+                if(_edCanCoverNode(i,graph,trie)){fixed=true;changed=true;break;}
+                node.letter=orig;
+            }
+            if(!fixed) node.letter=orig;
+        }
+        if(!changed) return false;
+    }
+    return _edFindCovered(graph,trie).size===graph.length;
+}
+
 function _edToBoard(graph) {
     let minR=Infinity,maxR=-Infinity,minC=Infinity,maxC=-Infinity;
     for(const nd of graph){if(nd.coord.r<minR)minR=nd.coord.r;if(nd.coord.r>maxR)maxR=nd.coord.r;if(nd.coord.c<minC)minC=nd.coord.c;if(nd.coord.c>maxC)maxC=nd.coord.c;}
@@ -691,6 +689,7 @@ function _edSeedAndFill(graph) {
 function fillRandom() {
     const graph=_edBuildRectGraph(editorRows, editorCols);
     _edSeedAndFill(graph);
+    const trie=_edGetTrie(); if(trie) _edValidateRepair(graph, trie);
     const inputs=document.getElementById('editor-table').querySelectorAll('input');
     for(let r=0;r<editorRows;r++) for(let c=0;c<editorCols;c++){
         const inp=inputs[r*editorCols+c];
@@ -701,10 +700,12 @@ function fillRandom() {
 }
 
 function generateRandom() {
+    const trie=_edGetTrie();
     for(let attempt=0; attempt<200; attempt++){
         const graph=_edGrowShape(_edGaussian(9,3));
         if(!_edTopologyOk(graph)) continue;
         _edAssignLetters(graph);
+        if(trie && !_edValidateRepair(graph, trie)) continue;
         const board=_edToBoard(graph);
         editorRows=board.rows; editorCols=board.cols;
         buildEditorTable(false, board.cells);
