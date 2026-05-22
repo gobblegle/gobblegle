@@ -1676,7 +1676,7 @@ async function endRoomGame() {
     await roomRef.child(`players/${playerId}`).update({ ready: false, closedScoreboard: false });
 
     roomRef.child('state').transaction(cur => cur==='playing' ? 'finished' : undefined,
-        (err, committed) => { if (committed) setTimeout(awardGamePoints, 5000); });
+        (err, committed) => { if (committed) setTimeout(awardGamePoints, 1000); });
 }
 
 async function awardGamePoints() {
