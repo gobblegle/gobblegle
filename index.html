@@ -1099,7 +1099,7 @@ function rotateBoard() {
         const newCells = Array.from({length: oldCols}, (_, nr) =>
             Array.from({length: oldRows}, (_, nc) => boardCells[oldRows-1-nc]?.[nr] ?? null));
         boardRows = oldCols; boardCols = oldRows; boardCells = newCells;
-        _buildCanonicalPaths();
+        _rotateCanonicalPaths(oldRows, oldCols);
         clearPathUI();
         updateCellSize();
         renderBoard();
@@ -1350,6 +1350,20 @@ function _buildCanonicalPaths() {
         const cp=_findFirstPath(word);
         if (cp) wordCanonicalPaths.set(word, cp);
     }
+}
+
+// Transforms canonical path keys after a 90° CW rotation.
+// Old (r,c) in oldRows×oldCols grid → new (c, oldRows-1-r) in oldCols×oldRows grid.
+function _rotateCanonicalPaths(oldRows, oldCols) {
+    const xform = k => {
+        const r = Math.floor(k / oldCols), c = k % oldCols;
+        return c * oldRows + (oldRows - 1 - r);
+    };
+    const next = new Map();
+    for (const [word, cp] of wordCanonicalPaths) {
+        next.set(word, { startKey: xform(cp.startKey), keys: cp.keys.map(xform) });
+    }
+    wordCanonicalPaths = next;
 }
 
 function updateTileHints() {
