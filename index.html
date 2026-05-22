@@ -1466,7 +1466,16 @@ function calculateValidWords() {
 }
 
 // ── Solo reset ─────────────────────────────────────────────────────────────
-function resetProgress() { foundWords.clear(); resetTimer(); saveProgress(); updateScoreUI(); clearPathUI(); }
+function resetProgress() {
+    foundWords.clear();
+    resetTimer();
+    saveProgress();
+    updateScoreUI();
+    clearPathUI();
+    const popup = document.getElementById('word-popup');
+    if (popup) popup.style.display = 'none';
+    updateTileHints();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ROOM SYSTEM
