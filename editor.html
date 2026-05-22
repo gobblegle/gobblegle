@@ -343,17 +343,18 @@ let edDict = null;
 let _wcTimer;
 
 (async () => {
-    const cached = localStorage.getItem('G2_dict_v2');
+    const cached = localStorage.getItem('G2_dict_v3');
     if (cached) { edDict = new Set(cached.split('\n')); updateWordCount(); return; }
     try {
-        const res = await fetch('./NWL2023.txt');
+        const res = await fetch('./2of12inf.txt');
         if (res.ok) {
             const words = (await res.text()).split(/[\n\r]+/)
-                .map(l => l.trim().split(/\s+/)[0])
+                .map(l => l.trim().replace(/[%!]+$/, ''))
                 .filter(w => w && w.length >= 4 && /^[A-Z]+$/i.test(w))
                 .map(w => w.toUpperCase());
             edDict = new Set(words);
-            try { localStorage.setItem('G2_dict_v2', words.join('\n')); } catch {}
+            _edTrie = null;
+            try { localStorage.setItem('G2_dict_v3', words.join('\n')); } catch {}
             updateWordCount();
         }
     } catch {}

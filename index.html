@@ -6,6 +6,11 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <title>Gobblegle</title>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+    <link rel="manifest" href="site.webmanifest">
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
     <style>
@@ -36,8 +41,9 @@
             border-bottom: 1px solid var(--border); background: var(--surface);
             position: relative;
         }
-        .header-title { display: flex; align-items: center; gap: 8px; }
+        .header-title { display: flex; flex-direction: column; align-items: center; gap: 4px; }
         .header-title img { height: 38px; width: auto; display: block; }
+        .header-subtitle { font-size: 0.95rem; font-weight: 700; color: var(--text); }
         .room-create-btn {
             position: absolute; right: 16px;
             background: var(--cell-active); color: var(--primary);
@@ -260,13 +266,16 @@
 
 <div class="loader" id="loader">
     <div class="spinner"></div>
-    <div id="loader-text">Loading NWL2023 Dictionary…</div>
+    <div id="loader-text">Loading Dictionary…</div>
 </div>
 
 <header>
     <div class="header-title">
-        <img src="gobblegleturkey.png" alt="">
-        <img src="gobblegletitle.png" alt="Gobblegle">
+        <div style="display:flex;align-items:center;gap:8px;">
+            <img src="gobblegleturkey.png" alt="">
+            <img src="gobblegletitle.png" alt="Gobblegle">
+        </div>
+        <div class="header-subtitle">A double-back path finding word game</div>
     </div>
     <button class="room-create-btn" id="start-room-btn" onclick="toggleRoomMenu(event)" title="Room" aria-label="Room">🚪</button>
     <div class="room-menu" id="room-menu" style="display:none">
@@ -418,7 +427,7 @@ try {
 } catch(e) { console.warn('Firebase not initialized:', e); }
 
 // ── State ──────────────────────────────────────────────────────────────────
-const DICT_CACHE_KEY = 'G2_dict_v2';
+const DICT_CACHE_KEY = 'G2_dict_v3';
 let boardRows = 5, boardCols = 5, boardCells = [], cellElements = [];
 let dictionary = new Set(), validWords = new Set(), foundWords = new Set();
 let isSelecting = false, currentPath = [];
@@ -843,7 +852,7 @@ async function loadDictionary() {
         return;
     }
     try {
-        const res = await fetch('./NWL2023.txt');
+        const res = await fetch('./2of12inf.txt');
         if (res.ok) { processDictText(await res.text()); return; }
     } catch {}
     document.getElementById('loader').innerHTML =
@@ -852,7 +861,7 @@ async function loadDictionary() {
 
 function processDictText(text) {
     const words = text.split(/[\n\r]+/)
-        .map(line => line.trim().split(/\s+/)[0])
+        .map(line => line.trim().replace(/[%!]+$/, ''))
         .filter(w => w && w.length >= 4 && /^[A-Z]+$/i.test(w))
         .map(w => w.toUpperCase());
     dictionary = new Set(words);
@@ -1255,6 +1264,7 @@ function pauseTimer() {
 }
 function resumeTimer() {
     if (!timerStarted || !timerPaused) return;
+    if (!roomMode && validWords.size > 0 && foundWords.size >= validWords.size) return;
     timerPaused = false;
     timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
 }
@@ -1278,17 +1288,40 @@ function updateTileHints() {
     const showStart = pct > 0.15;
     const showUsage = pct > 0.35;
 
-    const startCnt = {}, usageCnt = {}, usedLetters = new Set();
-    for (const word of remaining) {
-        startCnt[word[0]] = (startCnt[word[0]] || 0) + 1;
-        for (const ch of word) {
-            usedLetters.add(ch);
-            usageCnt[ch] = (usageCnt[ch] || 0) + 1;
-        }
-    }
-
     const winMsg = document.getElementById('win-msg');
     if (winMsg) winMsg.style.display = (!roomMode && remaining.length === 0) ? 'flex' : 'none';
+    if (!roomMode && remaining.length === 0 && timerStarted && !timerPaused) {
+        pauseTimer();
+        setTimeout(() => shareGame(), 800);
+    }
+
+    // Per-tile counts with deduplication: tiles are processed row-major and the first
+    // tile of a given letter claims each word (orange) or each word:position (grey).
+    const orangeCount = new Map(), greyCount = new Map();
+    const claimedStart = {}, claimedUsage = {};
+    for (let r = 0; r < boardRows; r++) {
+        for (let c = 0; c < boardCols; c++) {
+            const letter = boardCells[r]?.[c];
+            if (!letter) continue;
+            if (!claimedStart[letter]) claimedStart[letter] = new Set();
+            if (!claimedUsage[letter]) claimedUsage[letter] = new Set();
+            let oc = 0, gc = 0;
+            for (const word of remaining) {
+                if (word[0] === letter && !claimedStart[letter].has(word)) {
+                    oc++;
+                    claimedStart[letter].add(word);
+                }
+                for (let i = 0; i < word.length; i++) {
+                    if (word[i] === letter) {
+                        const pk = `${word}:${i}`;
+                        if (!claimedUsage[letter].has(pk)) { gc++; claimedUsage[letter].add(pk); }
+                    }
+                }
+            }
+            orangeCount.set(`${r},${c}`, oc);
+            greyCount.set(`${r},${c}`, gc);
+        }
+    }
 
     for (let r = 0; r < boardRows; r++) {
         for (let c = 0; c < boardCols; c++) {
@@ -1296,12 +1329,14 @@ function updateTileHints() {
             if (!letter) continue;
             const el = cellElements[r]?.[c];
             if (!el) continue;
-            const exhausted = !usedLetters.has(letter);
-            el.classList.toggle('exhausted', exhausted);
+            const key = `${r},${c}`;
+            const oc = orangeCount.get(key) || 0;
+            const gc = greyCount.get(key) || 0;
+            el.classList.toggle('exhausted', oc === 0 && gc === 0);
             const hs = el.querySelector('.tile-hint-start');
             const hu = el.querySelector('.tile-hint-usage');
-            if (hs) hs.textContent = (showStart && !exhausted && startCnt[letter]) ? startCnt[letter] : '';
-            if (hu) hu.textContent = (showUsage && !exhausted && usageCnt[letter]) ? usageCnt[letter] : '';
+            if (hs) hs.textContent = (showStart && oc > 0) ? oc : '';
+            if (hu) hu.textContent = (showUsage && gc > 0) ? gc : '';
         }
     }
 }
