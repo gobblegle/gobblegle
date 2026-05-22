@@ -430,6 +430,7 @@ try {
 const DICT_CACHE_KEY = 'G2_dict_v3';
 let boardRows = 5, boardCols = 5, boardCells = [], cellElements = [];
 let dictionary = new Set(), validWords = new Set(), foundWords = new Set();
+let wordCanonicalPaths = new Map(); // word -> { startKey, keys: number[] }
 let isSelecting = false, currentPath = [];
 let timerStarted = false, timerSeconds = 0, timerInterval = null, timerPaused = false;
 
@@ -1315,27 +1316,39 @@ function updateTimerDisplay() {
 }
 
 // ── Tile hints ─────────────────────────────────────────────────────────────
-// Collect every board position on any valid path spelling `word` starting at (sr,sc).
-// Uses double-back rules (no visited restriction), bounded by word length.
-function _hintCollect(word, sr, sc, startSet, useSet) {
-    const key0 = sr * boardCols + sc;
+// Returns the first DFS path found for `word` on the board (double-back allowed).
+// Result: { startKey, keys: number[] } or null.
+function _findFirstPath(word) {
     function dfs(r, c, idx, path) {
-        if (idx === word.length) {
-            for (const k of path) useSet.add(k);
-            startSet.add(path[0]);
-            return;
-        }
+        if (idx === word.length) return [...path];
         for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++) {
             if (!dr&&!dc) continue;
             const nr=r+dr, nc=c+dc;
             if (nr>=0&&nr<boardRows&&nc>=0&&nc<boardCols&&boardCells[nr]?.[nc]===word[idx]) {
                 path.push(nr*boardCols+nc);
-                dfs(nr, nc, idx+1, path);
+                const res=dfs(nr, nc, idx+1, path);
+                if (res) return res;
                 path.pop();
             }
         }
+        return null;
     }
-    if (boardCells[sr]?.[sc]===word[0]) dfs(sr, sc, 1, [key0]);
+    for (let r=0; r<boardRows; r++) for (let c=0; c<boardCols; c++) {
+        if (boardCells[r]?.[c]===word[0]) {
+            const k0=r*boardCols+c;
+            const keys=dfs(r, c, 1, [k0]);
+            if (keys) return { startKey: k0, keys };
+        }
+    }
+    return null;
+}
+
+function _buildCanonicalPaths() {
+    wordCanonicalPaths.clear();
+    for (const word of validWords) {
+        const cp=_findFirstPath(word);
+        if (cp) wordCanonicalPaths.set(word, cp);
+    }
 }
 
 function updateTileHints() {
@@ -1353,22 +1366,14 @@ function updateTileHints() {
         setTimeout(() => shareGame(), 800);
     }
 
-    // Per-tile, path-accurate counts: for each remaining word, find which specific
-    // tiles it can start from and which tiles appear on any valid path for that word.
-    const orangeCount = new Map(); // tileKey -> count of words that can START here
-    const greyCount   = new Map(); // tileKey -> count of words that USE this tile
+    const orangeCount = new Map();
+    const greyCount   = new Map();
 
     for (const word of remaining) {
-        const wordStartTiles = new Set(); // tile keys that start a valid path for this word
-        const wordUsedTiles  = new Set(); // tile keys on any valid path for this word
-
-        for (let r=0; r<boardRows; r++) for (let c=0; c<boardCols; c++) {
-            if (boardCells[r]?.[c]===word[0])
-                _hintCollect(word, r, c, wordStartTiles, wordUsedTiles);
-        }
-
-        for (const k of wordStartTiles) orangeCount.set(k, (orangeCount.get(k)||0)+1);
-        for (const k of wordUsedTiles)  greyCount.set(k,   (greyCount.get(k)||0)+1);
+        const cp = wordCanonicalPaths.get(word);
+        if (!cp) continue;
+        orangeCount.set(cp.startKey, (orangeCount.get(cp.startKey)||0)+1);
+        for (const k of cp.keys) greyCount.set(k, (greyCount.get(k)||0)+1);
     }
 
     for (let r=0; r<boardRows; r++) {
@@ -1462,6 +1467,7 @@ function calculateValidWords() {
         for(const ch of word) if(!ls.has(ch)){ok=false;break;}
         if(ok&&canSpellOnBoard(word)) validWords.add(word);
     }
+    _buildCanonicalPaths();
     updateScoreUI();
 }
 
