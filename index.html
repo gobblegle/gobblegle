@@ -1274,10 +1274,9 @@ function updateTileHints() {
     const startCnt = {}, usageCnt = {}, usedLetters = new Set();
     for (const word of remaining) {
         startCnt[word[0]] = (startCnt[word[0]] || 0) + 1;
-        const seen = new Set();
         for (const ch of word) {
             usedLetters.add(ch);
-            if (!seen.has(ch)) { usageCnt[ch] = (usageCnt[ch] || 0) + 1; seen.add(ch); }
+            usageCnt[ch] = (usageCnt[ch] || 0) + 1;
         }
     }
 
