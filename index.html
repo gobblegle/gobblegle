@@ -302,6 +302,7 @@
     <div class="current-word" id="word-preview"></div>
     <div id="board-wrapper" style="position:relative;margin:0 auto;">
         <button id="share-btn" onclick="shareGame()" title="Share your result" style="position:absolute;top:0;left:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'">🦃</button>
+        <div id="win-msg" style="display:none;position:absolute;top:0;left:0;right:0;height:34px;align-items:center;justify-content:center;font-size:0.88rem;font-weight:800;color:var(--primary);letter-spacing:0.08em;pointer-events:none;">YOU WIN!</div>
         <button id="rotate-btn" onclick="rotateBoard()" title="Rotate board 90°" style="position:absolute;top:0;right:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;color:var(--text-muted);opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'">↻</button>
         <div class="board-container" id="board-container">
             <svg class="svg-overlay" id="svg-overlay"></svg>
@@ -1279,6 +1280,9 @@ function updateTileHints() {
             usageCnt[ch] = (usageCnt[ch] || 0) + 1;
         }
     }
+
+    const winMsg = document.getElementById('win-msg');
+    if (winMsg) winMsg.style.display = (!roomMode && remaining.length === 0) ? 'flex' : 'none';
 
     for (let r = 0; r < boardRows; r++) {
         for (let c = 0; c < boardCols; c++) {
