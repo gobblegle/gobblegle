@@ -130,6 +130,9 @@
         }
         .grid-cell.active { background: var(--cell-active); border-color: var(--cell-border-active); transform: scale(0.93); }
         .grid-cell.empty  { background: transparent; border: none; pointer-events: none; }
+        .grid-cell.exhausted:not(.active) { color: #c0c0c0; border-color: #ede5dc; }
+        .tile-hint-start { position:absolute; bottom:3px; left:4px; font-size:0.56rem; font-weight:700; color:#fb923c; line-height:1; pointer-events:none; }
+        .tile-hint-usage { position:absolute; bottom:3px; right:4px; font-size:0.56rem; font-weight:700; color:#94a3b8; line-height:1; pointer-events:none; }
         .svg-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
 
         .timer { text-align: center; font-size: 1.1rem; font-weight: 700; color: var(--text-muted); letter-spacing: 0.12em; }
@@ -298,6 +301,7 @@
     </div>
     <div class="current-word" id="word-preview"></div>
     <div id="board-wrapper" style="position:relative;margin:0 auto;">
+        <button id="share-btn" onclick="shareGame()" title="Share your result" style="position:absolute;top:0;left:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'">🦃</button>
         <button id="rotate-btn" onclick="rotateBoard()" title="Rotate board 90°" style="position:absolute;top:0;right:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;color:var(--text-muted);opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'">↻</button>
         <div class="board-container" id="board-container">
             <svg class="svg-overlay" id="svg-overlay"></svg>
@@ -804,7 +808,7 @@ function generateShapedBoard(rows, cols) {
     return bestBoard;
 }
 
-function generateProceduralBoard() {
+function generateProceduralBoard(minWords) {
     const trie = _pbGetTrie();
     let bestBoard = null, bestCount = 0;
     for (let attempt = 0; attempt < 20; attempt++) {
@@ -814,7 +818,7 @@ function generateProceduralBoard() {
         _pbValidateRepair(graph, trie);
         const count = _pbCountWords(graph, trie);
         if (count > bestCount) { bestCount = count; bestBoard = _pbToBoard(graph); }
-        if (count >= _pbMinWords(graph.length)) break;
+        if (count >= (minWords || _pbMinWords(graph.length))) break;
     }
     return bestBoard || generateShapedBoard(4, 4);
 }
@@ -1063,7 +1067,7 @@ function renderBoard() {
             const cell   = document.createElement('div');
             if (letter) {
                 cell.className = 'grid-cell';
-                cell.textContent = letter;
+                cell.innerHTML = `<span class="tile-letter">${letter}</span><span class="tile-hint-start"></span><span class="tile-hint-usage"></span>`;
                 cell.dataset.r = r; cell.dataset.c = c;
                 cellElements[r][c] = cell;
             } else {
@@ -1076,6 +1080,7 @@ function renderBoard() {
     clearPathUI();
     updateScoreUI();
     requestAnimationFrame(updateCellSize);
+    updateTileHints();
 }
 
 // ── Hit detection ──────────────────────────────────────────────────────────
@@ -1135,11 +1140,13 @@ function endSelection() {
     preview.style.transition = ''; preview.style.opacity = '1';
 
     if (word.length >= 4) {
+        if (!roomMode) localStorage.setItem('G2_share_time', timerSeconds);
         const myWords = roomMode ? roomFoundWords : foundWords;
         if (validWords.has(word)) {
             if (!myWords.has(word)) {
                 myWords.add(word);
                 roomMode ? updateRoomScoreUI() : (saveProgress(), updateScoreUI());
+                updateTileHints();
                 preview.classList.add('found','settling');
                 requestAnimationFrame(() => { preview.style.opacity = '0.5'; });
             } else {
@@ -1253,6 +1260,41 @@ function updateTimerDisplay() {
     if (roomMode) return;
     const m=String(Math.floor(timerSeconds/60)).padStart(2,'0'), s=String(timerSeconds%60).padStart(2,'0');
     document.getElementById('timer-display').textContent=`${m}:${s}`;
+}
+
+// ── Tile hints ─────────────────────────────────────────────────────────────
+function updateTileHints() {
+    if (!validWords.size) return;
+    const myWords = roomMode ? roomFoundWords : foundWords;
+    const remaining = [...validWords].filter(w => !myWords.has(w));
+    const pct = myWords.size / validWords.size;
+    const showStart = pct > 0.15;
+    const showUsage = pct > 0.35;
+
+    const startCnt = {}, usageCnt = {}, usedLetters = new Set();
+    for (const word of remaining) {
+        startCnt[word[0]] = (startCnt[word[0]] || 0) + 1;
+        const seen = new Set();
+        for (const ch of word) {
+            usedLetters.add(ch);
+            if (!seen.has(ch)) { usageCnt[ch] = (usageCnt[ch] || 0) + 1; seen.add(ch); }
+        }
+    }
+
+    for (let r = 0; r < boardRows; r++) {
+        for (let c = 0; c < boardCols; c++) {
+            const letter = boardCells[r]?.[c];
+            if (!letter) continue;
+            const el = cellElements[r]?.[c];
+            if (!el) continue;
+            const exhausted = !usedLetters.has(letter);
+            el.classList.toggle('exhausted', exhausted);
+            const hs = el.querySelector('.tile-hint-start');
+            const hu = el.querySelector('.tile-hint-usage');
+            if (hs) hs.textContent = (showStart && !exhausted && startCnt[letter]) ? startCnt[letter] : '';
+            if (hu) hu.textContent = (showUsage && !exhausted && usageCnt[letter]) ? usageCnt[letter] : '';
+        }
+    }
 }
 
 // ── Score UI ───────────────────────────────────────────────────────────────
@@ -1612,7 +1654,7 @@ async function autoStartGame(data) {
             const rows = s.rows || s.size || 4;
             const cols = s.cols || s.size || 4;
             const nextRound = (d.currentRound ?? -1) + 1;
-            const board = s.mode === 'random' ? generateProceduralBoard() : generateShapedBoard(rows, cols);
+            const board = s.mode === 'random' ? generateProceduralBoard(20) : generateShapedBoard(rows, cols);
             const updates = { board, startedAt: Date.now(), currentRound: nextRound };
             for (const pid of Object.keys(d.players || {})) {
                 updates[`players/${pid}/closedScoreboard`] = false;
@@ -1649,6 +1691,7 @@ function renderRoomPlaying(data) {
 
     setTimeout(() => {
         calculateValidWords();
+        updateTileHints();
         updateRoomScoreUI();
         startRoomCountdown(data.startedAt + (data.settings?.minutes || 3) * 60000);
     }, 50);
@@ -1676,7 +1719,24 @@ async function endRoomGame() {
     await roomRef.child(`players/${playerId}`).update({ ready: false, closedScoreboard: false });
 
     roomRef.child('state').transaction(cur => cur==='playing' ? 'finished' : undefined,
-        (err, committed) => { if (committed) setTimeout(awardGamePoints, 1000); });
+        (err, committed) => { if (committed) waitForAllScores(roomCurrentRound).then(awardGamePoints); });
+}
+
+function waitForAllScores(round) {
+    return new Promise(resolve => {
+        const ref = roomRef.child('players');
+        const bail = setTimeout(() => { ref.off('value', check); resolve(); }, 5000);
+        function check(snap) {
+            const players = snap.val() || {};
+            const online = Object.values(players).filter(p => p.online !== false);
+            if (online.length > 0 && online.every(p => p.rounds?.[round]?.score != null)) {
+                clearTimeout(bail);
+                ref.off('value', check);
+                resolve();
+            }
+        }
+        ref.on('value', check);
+    });
 }
 
 async function awardGamePoints() {
@@ -1865,6 +1925,24 @@ async function leaveRoom() {
     loadProgress();
     calculateValidWords();
     renderBoard();
+}
+
+function shareGame() {
+    if (roomMode) return;
+    const secs = parseInt(localStorage.getItem('G2_share_time') || timerSeconds || 0);
+    const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+    const ss = String(secs % 60).padStart(2, '0');
+    const text = `🦃 I played Gobblegle! 🦃\nFound ${foundWords.size}/${validWords.size}\n${mm}:${ss}\nhttps://gobblegle.github.io/gobblegle/`;
+    if (navigator.share) {
+        navigator.share({ title: 'Gobblegle', text }).catch(() => {});
+    } else {
+        navigator.clipboard.writeText(text).then(() => {
+            const btn = document.getElementById('share-btn');
+            const prev = btn.textContent;
+            btn.textContent = '✓';
+            setTimeout(() => { btn.textContent = prev; }, 2000);
+        }).catch(() => { prompt('Copy this:', text); });
+    }
 }
 
 function shareRoom() {

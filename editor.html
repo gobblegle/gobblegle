@@ -112,6 +112,14 @@
             display: none;
         }
         .gh-saved-indicator.visible { display: inline-block; }
+
+        #word-list-container {
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 10px; padding: 14px 16px;
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        .word-chips { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+        .word-chip  { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text); }
     </style>
 </head>
 <body>
@@ -173,8 +181,11 @@
         <div class="table-wrap">
             <table class="editor-table" id="editor-table"></table>
         </div>
-        <div style="font-size:0.85rem;font-weight:600;color:var(--text-muted)">
-            Valid words: <span id="word-count" style="color:var(--primary)">—</span>
+        <div style="font-size:0.85rem;font-weight:600;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <span>Valid words: <span id="word-count" style="color:var(--primary)">—</span></span>
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:600;font-size:0.82rem;">
+                <input type="checkbox" id="show-words-cb" onchange="renderWordList()"> Show words
+            </label>
         </div>
         <div class="status" id="status"></div>
         <div class="actions">
@@ -183,6 +194,7 @@
             <button class="btn btn-sec" onclick="clearAll()">Clear</button>
             <button class="btn" id="push-btn" onclick="pushBoard()">Push to GitHub</button>
         </div>
+        <div id="word-list-container" style="display:none;"></div>
     </div>
 
 </div>
@@ -435,21 +447,51 @@ function scheduleWordCount() {
     }, 200);
 }
 
+let _edCurrentWords = [];
+
 function updateWordCount() {
     const el = document.getElementById('word-count');
-    if (!edDict) { el.textContent = '—'; return; }
+    if (!edDict) { el.textContent = '—'; _edCurrentWords = []; renderWordList(); return; }
     const { cells, hasAny } = readCells();
-    if (!hasAny) { el.textContent = '—'; return; }
-    if (!isConnected(cells, editorRows, editorCols)) { el.textContent = '—'; return; }
+    if (!hasAny || !isConnected(cells, editorRows, editorCols)) { el.textContent = '—'; _edCurrentWords = []; renderWordList(); return; }
     const ls = new Set();
     for (let r=0;r<editorRows;r++) for (let c=0;c<editorCols;c++) if (cells[r]?.[c]) ls.add(cells[r][c]);
-    let count = 0;
+    const words = [];
     for (const word of edDict) {
         let ok = true;
         for (const ch of word) if (!ls.has(ch)) { ok=false; break; }
-        if (ok && edCanSpell(word, cells, editorRows, editorCols)) count++;
+        if (ok && edCanSpell(word, cells, editorRows, editorCols)) words.push(word);
     }
-    el.textContent = count.toLocaleString();
+    _edCurrentWords = words;
+    el.textContent = words.length.toLocaleString();
+    renderWordList();
+}
+
+function renderWordList() {
+    const container = document.getElementById('word-list-container');
+    const cb = document.getElementById('show-words-cb');
+    if (!cb?.checked) { container.style.display = 'none'; return; }
+    if (!_edCurrentWords.length) {
+        container.innerHTML = '<div style="font-size:0.82rem;color:var(--text-muted)">No valid words yet</div>';
+        container.style.display = '';
+        return;
+    }
+    const groups = {};
+    for (const w of _edCurrentWords) (groups[w.length] = groups[w.length] || []).push(w);
+    container.innerHTML = '';
+    Object.keys(groups).sort((a,b) => +a - +b).forEach(len => {
+        const wList = groups[len].sort();
+        const sec = document.createElement('div');
+        const hdr = document.createElement('div');
+        hdr.style.cssText = 'font-size:0.78rem;font-weight:700;color:var(--text-muted);margin-bottom:4px';
+        hdr.textContent = `${len}-letter (${wList.length})`;
+        sec.appendChild(hdr);
+        const chips = document.createElement('div'); chips.className = 'word-chips';
+        wList.forEach(w => { const c = document.createElement('span'); c.className = 'word-chip'; c.textContent = w; chips.appendChild(c); });
+        sec.appendChild(chips);
+        container.appendChild(sec);
+    });
+    container.style.display = '';
 }
 
 function showStatus(msg, type) {
