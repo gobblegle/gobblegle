@@ -687,17 +687,46 @@ function _edSeedAndFill(graph) {
     }
 }
 
-function fillRandom() {
-    const graph=_edBuildRectGraph(editorRows, editorCols);
-    _edSeedAndFill(graph);
-    const trie=_edGetTrie(); if(trie) _edValidateRepair(graph, trie);
-    const inputs=document.getElementById('editor-table').querySelectorAll('input');
-    for(let r=0;r<editorRows;r++) for(let c=0;c<editorCols;c++){
-        const inp=inputs[r*editorCols+c];
-        if(inp) inp.value=graph[r*editorCols+c].letter;
+function _edAllTilesUsed(cells, rows, cols) {
+    if(!edDict) return true;
+    const ls=new Set();
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) if(cells[r]?.[c]) ls.add(cells[r][c]);
+    let total=0; for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) if(cells[r]?.[c]) total++;
+    const used=new Set();
+    function spell(word,idx,r,c,path){
+        if(idx===word.length){for(const k of path) used.add(k);return;}
+        for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
+            if(!dr&&!dc) continue;
+            const nr=r+dr,nc=c+dc;
+            if(nr>=0&&nr<rows&&nc>=0&&nc<cols&&cells[nr]?.[nc]===word[idx]){
+                path.push(nr*cols+nc);spell(word,idx+1,nr,nc,path);path.pop();
+            }
+        }
     }
-    clearStatus();
-    scheduleWordCount();
+    for(const word of edDict){
+        if(used.size>=total) break;
+        let ok=true; for(const ch of word) if(!ls.has(ch)){ok=false;break;}
+        if(!ok) continue;
+        for(let r=0;r<rows&&used.size<total;r++) for(let c=0;c<cols&&used.size<total;c++)
+            if(cells[r]?.[c]===word[0]) spell(word,1,r,c,[r*cols+c]);
+    }
+    return used.size>=total;
+}
+
+function fillRandom() {
+    const trie=_edGetTrie();
+    for(let attempt=0; attempt<50; attempt++){
+        const graph=_edBuildRectGraph(editorRows, editorCols);
+        _edSeedAndFill(graph);
+        if(trie) _edValidateRepair(graph, trie);
+        const cells=Array.from({length:editorRows},(_,r)=>Array.from({length:editorCols},(_,c)=>graph[r*editorCols+c].letter));
+        if(edDict && attempt<49 && !_edAllTilesUsed(cells, editorRows, editorCols)) continue;
+        const inputs=document.getElementById('editor-table').querySelectorAll('input');
+        for(let r=0;r<editorRows;r++) for(let c=0;c<editorCols;c++){
+            const inp=inputs[r*editorCols+c]; if(inp) inp.value=cells[r][c];
+        }
+        clearStatus(); scheduleWordCount(); return;
+    }
 }
 
 function generateRandom() {
@@ -708,11 +737,10 @@ function generateRandom() {
         _edAssignLetters(graph);
         if(trie && !_edValidateRepair(graph, trie)) continue;
         const board=_edToBoard(graph);
+        if(edDict && !_edAllTilesUsed(board.cells, board.rows, board.cols)) continue;
         editorRows=board.rows; editorCols=board.cols;
         buildEditorTable(false, board.cells);
-        clearStatus();
-        scheduleWordCount();
-        return;
+        clearStatus(); scheduleWordCount(); return;
     }
 }
 </script>

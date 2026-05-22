@@ -743,6 +743,38 @@ function _pbValidateRepair(graph, trie) {
     return _pbFindCovered(graph, trie).size === graph.length;
 }
 
+// Verify every tile on the board appears in at least one valid word,
+// using the same adjacency + double-back rules the game uses.
+// Returns true only when the board is fully usable.
+function _pbBoardAllTilesUsed(board) {
+    if (!dictionary.size) return true; // no dict loaded yet, skip check
+    const {rows, cols, cells} = board;
+    const ls = new Set();
+    for (let r=0; r<rows; r++) for (let c=0; c<cols; c++) if (cells[r]?.[c]) ls.add(cells[r][c]);
+    let total = 0;
+    for (let r=0; r<rows; r++) for (let c=0; c<cols; c++) if (cells[r]?.[c]) total++;
+    const used = new Set();
+    function spell(word, idx, r, c, path) {
+        if (idx === word.length) { for (const k of path) used.add(k); return; }
+        for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++) {
+            if (!dr&&!dc) continue;
+            const nr=r+dr, nc=c+dc;
+            if (nr>=0&&nr<rows&&nc>=0&&nc<cols&&cells[nr]?.[nc]===word[idx]) {
+                path.push(nr*cols+nc); spell(word, idx+1, nr, nc, path); path.pop();
+            }
+        }
+    }
+    for (const word of dictionary) {
+        if (used.size >= total) break;
+        let ok = true; for (const ch of word) if (!ls.has(ch)) { ok=false; break; }
+        if (!ok) continue;
+        for (let r=0; r<rows&&used.size<total; r++) for (let c=0; c<cols&&used.size<total; c++) {
+            if (cells[r]?.[c]===word[0]) { spell(word, 1, r, c, [r*cols+c]); }
+        }
+    }
+    return used.size >= total;
+}
+
 // Count distinct valid words reachable via standard (no-revisit) DFS.
 // Conservative vs. the game's double-back rules, so boards that pass the
 // threshold will always have MORE findable words than counted here.
@@ -807,10 +839,11 @@ function generateShapedBoard(rows, cols) {
         const graph = _pbBuildRectGraph(rows, cols);
         _pbSeedAndFill(graph);
         if (!_pbValidateRepair(graph, trie)) continue;
-        const count = _pbCountWords(graph, trie);
         const cells = Array.from({length:rows}, (_,r) =>
             Array.from({length:cols}, (_,c) => graph[r*cols+c].letter));
         const board = { rows, cols, cells };
+        if (!_pbBoardAllTilesUsed(board)) continue;
+        const count = _pbCountWords(graph, trie);
         if (count > bestCount) { bestCount = count; bestBoard = board; }
         if (count >= minW) break;
     }
@@ -825,8 +858,10 @@ function generateProceduralBoard(minWords) {
         if (!_pbTopologyOk(graph)) continue;
         _pbSeedAndFill(graph);
         if (!_pbValidateRepair(graph, trie)) continue;
+        const board = _pbToBoard(graph);
+        if (!_pbBoardAllTilesUsed(board)) continue;
         const count = _pbCountWords(graph, trie);
-        if (count > bestCount) { bestCount = count; bestBoard = _pbToBoard(graph); }
+        if (count > bestCount) { bestCount = count; bestBoard = board; }
         if (count >= (minWords || _pbMinWords(graph.length))) break;
     }
     return bestBoard || generateShapedBoard(4, 4);
@@ -1280,6 +1315,29 @@ function updateTimerDisplay() {
 }
 
 // ── Tile hints ─────────────────────────────────────────────────────────────
+// Collect every board position on any valid path spelling `word` starting at (sr,sc).
+// Uses double-back rules (no visited restriction), bounded by word length.
+function _hintCollect(word, sr, sc, startSet, useSet) {
+    const key0 = sr * boardCols + sc;
+    function dfs(r, c, idx, path) {
+        if (idx === word.length) {
+            for (const k of path) useSet.add(k);
+            startSet.add(path[0]);
+            return;
+        }
+        for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++) {
+            if (!dr&&!dc) continue;
+            const nr=r+dr, nc=c+dc;
+            if (nr>=0&&nr<boardRows&&nc>=0&&nc<boardCols&&boardCells[nr]?.[nc]===word[idx]) {
+                path.push(nr*boardCols+nc);
+                dfs(nr, nc, idx+1, path);
+                path.pop();
+            }
+        }
+    }
+    if (boardCells[sr]?.[sc]===word[0]) dfs(sr, sc, 1, [key0]);
+}
+
 function updateTileHints() {
     if (!validWords.size) return;
     const myWords = roomMode ? roomFoundWords : foundWords;
@@ -1295,48 +1353,38 @@ function updateTileHints() {
         setTimeout(() => shareGame(), 800);
     }
 
-    // Per-tile counts with deduplication: tiles are processed row-major and the first
-    // tile of a given letter claims each word (orange) or each word:position (grey).
-    const orangeCount = new Map(), greyCount = new Map();
-    const claimedStart = {}, claimedUsage = {};
-    for (let r = 0; r < boardRows; r++) {
-        for (let c = 0; c < boardCols; c++) {
-            const letter = boardCells[r]?.[c];
-            if (!letter) continue;
-            if (!claimedStart[letter]) claimedStart[letter] = new Set();
-            if (!claimedUsage[letter]) claimedUsage[letter] = new Set();
-            let oc = 0, gc = 0;
-            for (const word of remaining) {
-                if (word[0] === letter && !claimedStart[letter].has(word)) {
-                    oc++;
-                    claimedStart[letter].add(word);
-                }
-                for (let i = 0; i < word.length; i++) {
-                    if (word[i] === letter) {
-                        const pk = `${word}:${i}`;
-                        if (!claimedUsage[letter].has(pk)) { gc++; claimedUsage[letter].add(pk); }
-                    }
-                }
-            }
-            orangeCount.set(`${r},${c}`, oc);
-            greyCount.set(`${r},${c}`, gc);
+    // Per-tile, path-accurate counts: for each remaining word, find which specific
+    // tiles it can start from and which tiles appear on any valid path for that word.
+    const orangeCount = new Map(); // tileKey -> count of words that can START here
+    const greyCount   = new Map(); // tileKey -> count of words that USE this tile
+
+    for (const word of remaining) {
+        const wordStartTiles = new Set(); // tile keys that start a valid path for this word
+        const wordUsedTiles  = new Set(); // tile keys on any valid path for this word
+
+        for (let r=0; r<boardRows; r++) for (let c=0; c<boardCols; c++) {
+            if (boardCells[r]?.[c]===word[0])
+                _hintCollect(word, r, c, wordStartTiles, wordUsedTiles);
         }
+
+        for (const k of wordStartTiles) orangeCount.set(k, (orangeCount.get(k)||0)+1);
+        for (const k of wordUsedTiles)  greyCount.set(k,   (greyCount.get(k)||0)+1);
     }
 
-    for (let r = 0; r < boardRows; r++) {
-        for (let c = 0; c < boardCols; c++) {
+    for (let r=0; r<boardRows; r++) {
+        for (let c=0; c<boardCols; c++) {
             const letter = boardCells[r]?.[c];
             if (!letter) continue;
             const el = cellElements[r]?.[c];
             if (!el) continue;
-            const key = `${r},${c}`;
-            const oc = orangeCount.get(key) || 0;
-            const gc = greyCount.get(key) || 0;
-            el.classList.toggle('exhausted', oc === 0 && gc === 0);
+            const k = r*boardCols+c;
+            const oc = orangeCount.get(k)||0;
+            const gc = greyCount.get(k)||0;
+            el.classList.toggle('exhausted', gc===0);
             const hs = el.querySelector('.tile-hint-start');
             const hu = el.querySelector('.tile-hint-usage');
-            if (hs) hs.textContent = (showStart && oc > 0) ? oc : '';
-            if (hu) hu.textContent = (showUsage && gc > 0) ? gc : '';
+            if (hs) hs.textContent = (showStart && oc>0) ? oc : '';
+            if (hu) hu.textContent = (showUsage && gc>0) ? gc : '';
         }
     }
 }
