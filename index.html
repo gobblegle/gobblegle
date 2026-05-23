@@ -432,7 +432,7 @@ let boardRows = 5, boardCols = 5, boardCells = [], cellElements = [];
 let dictionary = new Set(), validWords = new Set(), foundWords = new Set();
 let wordCanonicalPaths = new Map(); // word -> { startKey, keys: number[] }
 let preloadedWords = null;    // pre-computed word list from Firebase (avoids full dict download)
-let gameWordSelections = new Map(); // word -> 'green'|'red', loaded from Firebase for host use
+let gameWordSelections = new Set(); // excluded words loaded from Firebase
 let isSelecting = false, currentPath = [];
 let timerStarted = false, timerSeconds = 0, timerInterval = null, timerPaused = false;
 
@@ -471,7 +471,7 @@ function _pbGetTrie() {
     const root = Object.create(null);
     for (const word of dictionary) {
         if (word.length < 4 || word.length > 18) continue;
-        if (gameWordSelections.get(word) === 'red') continue;
+        if (gameWordSelections.has(word)) continue;
         let n = root;
         for (const ch of word) { if (!n[ch]) n[ch] = Object.create(null); n = n[ch]; }
         n.$ = 1;
@@ -1505,6 +1505,7 @@ function calculateValidWords() {
     const ls=new Set();
     for(let r=0;r<boardRows;r++) for(let c=0;c<boardCols;c++) if(boardCells[r]?.[c]) ls.add(boardCells[r][c]);
     for(const word of dictionary) {
+        if(gameWordSelections.has(word)) continue;
         let ok=true;
         for(const ch of word) if(!ls.has(ch)){ok=false;break;}
         if(ok&&canSpellOnBoard(word)) validWords.add(word);
@@ -1804,8 +1805,8 @@ async function loadGameWordSelections() {
     if (!db) return;
     try {
         const snap = await db.ref('wordSelections').once('value');
-        gameWordSelections = new Map(Object.entries(snap.val() || {}));
-        _pbTrie = null; // rebuild trie with updated red-word filter
+        gameWordSelections = new Set(Object.keys(snap.val() || {}));
+        _pbTrie = null; // rebuild trie with updated exclusion list
     } catch {}
 }
 
@@ -1819,7 +1820,7 @@ function computeRoomWords(board) {
             if (boardCells[r]?.[c]) ls.add(boardCells[r][c]);
     const words = [];
     for (const word of dictionary) {
-        if (gameWordSelections.get(word) === 'red') continue;
+        if (gameWordSelections.has(word)) continue;
         let ok = true;
         for (const ch of word) if (!ls.has(ch)) { ok = false; break; }
         if (ok && canSpellOnBoard(word)) words.push(word);
@@ -1868,7 +1869,6 @@ function renderRoomPlaying(data) {
     showPanel('game');
 
     boardRows = data.board.rows; boardCols = data.board.cols; boardCells = data.board.cells;
-    preloadedWords = data.board.words?.length ? new Set(data.board.words) : null;
     roomFoundWords   = new Set();
     roomScoreSubmitted = false;
     roomCurrentRound   = data.currentRound ?? 0;

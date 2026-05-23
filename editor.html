@@ -158,8 +158,6 @@
             font-size: 0.85rem; font-weight: 900; transition: all 0.12s; background: transparent;
             flex-shrink: 0;
         }
-        .ws-btn-green { border-color: #bbf7d0; color: #bbf7d0; }
-        .ws-btn-green.active { border-color: #16a34a; background: #16a34a; color: #fff; }
         .ws-btn-red { border-color: #fecaca; color: #fecaca; }
         .ws-btn-red.active { border-color: #dc2626; background: #dc2626; color: #fff; }
         .ws-footer {
@@ -231,12 +229,11 @@
         </div>
         <div class="ws-col-labels">
             <span>Word</span>
-            <span style="width:28px;text-align:center;margin-right:6px">✓</span>
-            <span style="width:28px;text-align:center">✕</span>
+            <span style="width:28px;text-align:center">Exclude</span>
         </div>
         <div class="ws-body" id="ws-body"></div>
         <div class="ws-footer">
-            <span class="ws-footer-note">✓ keep &nbsp;·&nbsp; ✕ removes from word list</span>
+            <span class="ws-footer-note">✕ removes word from the valid list</span>
             <button class="btn btn-sec" onclick="closeWordSelect()">Cancel</button>
             <button class="btn" onclick="applyWordSelections()">Set</button>
         </div>
@@ -421,25 +418,26 @@ function isConnected(cells, rows, cols) {
 }
 
 // ── Word selections (stored in Firebase) ───────────────────────────────────
-let edWordSelections = new Map(); // word -> 'green' | 'red'
+let edWordSelections = new Set(); // words on the exclude list
 
 async function loadWordSelections() {
     if (!db) return;
     try {
         const snap = await db.ref('wordSelections').once('value');
-        edWordSelections = new Map(Object.entries(snap.val() || {}));
+        edWordSelections = new Set(Object.keys(snap.val() || {}));
     } catch {}
 }
 
-async function _toggleWordSel(word, color) {
-    const cur = edWordSelections.get(word);
-    const next = cur === color ? null : color;
-    if (next) edWordSelections.set(word, next); else edWordSelections.delete(word);
-    if (db) {
-        try { if (next) await db.ref(`wordSelections/${word}`).set(next);
-              else await db.ref(`wordSelections/${word}`).remove(); } catch {}
+async function _toggleWordSel(word) {
+    const excluded = edWordSelections.has(word);
+    if (excluded) {
+        edWordSelections.delete(word);
+        if (db) try { await db.ref(`wordSelections/${word}`).remove(); } catch {}
+    } else {
+        edWordSelections.add(word);
+        if (db) try { await db.ref(`wordSelections/${word}`).set(true); } catch {}
     }
-    return next;
+    return !excluded; // true = now excluded
 }
 
 function openWordSelect() {
@@ -459,33 +457,21 @@ function renderWordSelectList() {
     const sorted = [..._edCurrentWords].sort((a, b) => a.length - b.length || a.localeCompare(b));
     body.innerHTML = '';
     for (const word of sorted) {
-        const state = edWordSelections.get(word) || null;
         const row = document.createElement('div');
         row.className = 'ws-row';
 
         const wspan = document.createElement('span');
         wspan.className = 'ws-word'; wspan.textContent = word;
 
-        const gbtn = document.createElement('button');
-        gbtn.className = 'ws-btn ws-btn-green' + (state === 'green' ? ' active' : '');
-        gbtn.innerHTML = '✓';
-
         const rbtn = document.createElement('button');
-        rbtn.className = 'ws-btn ws-btn-red' + (state === 'red' ? ' active' : '');
+        rbtn.className = 'ws-btn ws-btn-red' + (edWordSelections.has(word) ? ' active' : '');
         rbtn.innerHTML = '✕';
-
-        gbtn.onclick = async () => {
-            const next = await _toggleWordSel(word, 'green');
-            gbtn.className = 'ws-btn ws-btn-green' + (next === 'green' ? ' active' : '');
-            rbtn.className = 'ws-btn ws-btn-red';
-        };
         rbtn.onclick = async () => {
-            const next = await _toggleWordSel(word, 'red');
-            rbtn.className = 'ws-btn ws-btn-red' + (next === 'red' ? ' active' : '');
-            gbtn.className = 'ws-btn ws-btn-green';
+            const nowExcluded = await _toggleWordSel(word);
+            rbtn.className = 'ws-btn ws-btn-red' + (nowExcluded ? ' active' : '');
         };
 
-        row.appendChild(wspan); row.appendChild(gbtn); row.appendChild(rbtn);
+        row.appendChild(wspan); row.appendChild(rbtn);
         body.appendChild(row);
     }
 }
@@ -544,7 +530,7 @@ function updateWordCount() {
     for (let r=0;r<editorRows;r++) for (let c=0;c<editorCols;c++) if (cells[r]?.[c]) ls.add(cells[r][c]);
     const words = [];
     for (const word of edDict) {
-        if (edWordSelections.get(word) === 'red') continue;
+        if (edWordSelections.has(word)) continue;
         let ok = true;
         for (const ch of word) if (!ls.has(ch)) { ok=false; break; }
         if (ok && edCanSpell(word, cells, editorRows, editorCols)) words.push(word);
