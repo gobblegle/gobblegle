@@ -349,6 +349,11 @@
             </div>
         </div>
 
+        <div class="card" id="sitting-out-card" style="display:none">
+            <div class="card-title" style="color:var(--text-muted)">Sitting Out</div>
+            <div class="player-list" id="sitting-out-list"></div>
+        </div>
+
         <div class="card">
             <div class="card-title">Game Settings</div>
             <div class="setting-row">
@@ -1660,7 +1665,7 @@ function handleRoomUpdate(data) {
 function checkAutoStart(data) {
     const players = data.players || {};
     const arr = Object.entries(players)
-        .filter(([,p]) => p.online !== false)
+        .filter(([,p]) => p.online !== false && !p.skipping)
         .sort((a,b) => (a[1].joined||0)-(b[1].joined||0));
     if (arr.length > 0 && arr.every(([,p]) => p.ready) && arr[0][0] === playerId) {
         autoStartGame(data);
@@ -1674,41 +1679,63 @@ function renderLobby(data) {
     const players = data.players || {};
     const myPlayer = players[playerId];
     const hasJoined = !!myPlayer && myPlayer.online !== false;
-    const myReady   = myPlayer?.ready || false;
+    const mySkipping = myPlayer?.skipping || false;
+    const myReady    = myPlayer?.ready || false;
 
     document.getElementById('name-entry-card').style.display = '';
     const joinBtn = document.getElementById('join-lobby-btn');
     if (joinBtn) joinBtn.textContent = hasJoined ? 'Update' : 'Join';
 
     const readyBtn = document.getElementById('ready-btn');
-    readyBtn.disabled = !hasJoined;
+    readyBtn.disabled = !hasJoined || mySkipping;
     readyBtn.textContent = myReady ? 'Ready ✓' : "I'm Ready";
     readyBtn.className = 'btn btn-full' + (myReady ? ' btn-green' : '');
 
-    // Only show online players
     const onlinePlayers = Object.entries(players).filter(([,p]) => p.online !== false);
-    // Host = earliest joined among online
     const hostId = onlinePlayers.slice().sort((a,b) => (a[1].joined||0)-(b[1].joined||0))[0]?.[0];
-    // Display order: most game points first, then join order
-    const displayArr = onlinePlayers.slice().sort((a,b) =>
-        (b[1].gamePoints||0)-(a[1].gamePoints||0) || (a[1].joined||0)-(b[1].joined||0));
+
+    const activePlayers = onlinePlayers
+        .filter(([,p]) => !p.skipping)
+        .sort((a,b) => (b[1].gamePoints||0)-(a[1].gamePoints||0) || (a[1].joined||0)-(b[1].joined||0));
+    const sittingOut = onlinePlayers
+        .filter(([,p]) => p.skipping)
+        .sort((a,b) => (a[1].joined||0)-(b[1].joined||0));
 
     const pl = document.getElementById('player-list');
     pl.innerHTML = '';
-    if (!displayArr.length) {
+    if (!activePlayers.length) {
         pl.innerHTML = '<div class="hint">No players yet…</div>';
     } else {
-        displayArr.forEach(([pid,p]) => {
+        activePlayers.forEach(([pid,p]) => {
             const el=document.createElement('div');
             el.className='player-item'+(pid===playerId?' me':'');
             const hostTag = pid===hostId ? ' <span style="font-size:.75rem;color:var(--text-muted);font-weight:400">(host)</span>' : '';
             const pts = p.gamePoints || 0;
             const scoreTag = `<span style="font-size:.78rem;color:var(--text-muted);margin-left:4px">${pts} pt${pts!==1?'s':''}</span>`;
             const badge = `<span class="ready-badge ${p.ready?'yes':'no'}">${p.ready?'Ready':'Waiting'}</span>`;
-            el.innerHTML=`<span class="player-dot"></span>${p.name||'?'}${hostTag}${scoreTag}${badge}`;
+            if (pid === playerId) {
+                el.innerHTML=`<button onclick="toggleSkipping(true)" title="Sit out this round" style="background:none;border:none;color:var(--error);font-size:0.95rem;font-weight:700;cursor:pointer;padding:0;flex-shrink:0;line-height:1">✕</button><span class="player-dot"></span>${p.name||'?'}${hostTag}${scoreTag}${badge}`;
+            } else {
+                el.innerHTML=`<span class="player-dot"></span>${p.name||'?'}${hostTag}${scoreTag}${badge}`;
+            }
             pl.appendChild(el);
         });
     }
+
+    const sitCard = document.getElementById('sitting-out-card');
+    const sitList = document.getElementById('sitting-out-list');
+    sitCard.style.display = sittingOut.length ? '' : 'none';
+    sitList.innerHTML = '';
+    sittingOut.forEach(([pid,p]) => {
+        const el=document.createElement('div');
+        el.className='player-item'+(pid===playerId?' me':'');
+        if (pid === playerId) {
+            el.innerHTML=`<button onclick="toggleSkipping(false)" title="Rejoin" style="background:none;border:none;color:var(--primary);font-size:0.95rem;font-weight:700;cursor:pointer;padding:0;flex-shrink:0;line-height:1">↩</button><span class="player-dot" style="background:var(--text-muted)"></span><span style="color:var(--text-muted)">${p.name||'?'}</span>`;
+        } else {
+            el.innerHTML=`<span class="player-dot" style="background:var(--text-muted)"></span><span style="color:var(--text-muted)">${p.name||'?'}</span>`;
+        }
+        sitList.appendChild(el);
+    });
 
     const s = data.settings || {rows:4,cols:4,minutes:3};
     const rows = s.rows || s.size || 4;
@@ -1733,9 +1760,9 @@ async function joinLobby() {
     const snap = await roomRef.child(`players/${playerId}`).once('value');
     const existing = snap.val();
     if (existing) {
-        await roomRef.child(`players/${playerId}`).update({ name, online: true, ready: false });
+        await roomRef.child(`players/${playerId}`).update({ name, online: true, ready: false, skipping: false });
     } else {
-        await roomRef.child(`players/${playerId}`).set({ name, gamePoints: 0, joined: Date.now(), online: true, ready: false });
+        await roomRef.child(`players/${playerId}`).set({ name, gamePoints: 0, joined: Date.now(), online: true, ready: false, skipping: false });
     }
     roomRef.child(`players/${playerId}/online`).onDisconnect().set(false);
     const joinBtn = document.getElementById('join-lobby-btn');
@@ -1747,6 +1774,10 @@ async function toggleReady() {
     const p = snap.val();
     if (!p) return;
     await roomRef.child(`players/${playerId}/ready`).set(!p.ready);
+}
+
+async function toggleSkipping(skip) {
+    await roomRef.child(`players/${playerId}`).update({ skipping: skip, ready: false });
 }
 
 async function setRoomSetting(field, val) {
@@ -1874,7 +1905,10 @@ function renderRoomPlaying(data) {
     roomScoreSubmitted = false;
     roomCurrentRound   = data.currentRound ?? 0;
 
-    document.getElementById('score-btn').textContent = 'Calculating…';
+    // Populate validWords immediately so score shows without delay
+    validWords.clear();
+    if (preloadedWords) for (const word of preloadedWords) validWords.add(word);
+
     document.getElementById('room-score-display').textContent = 'Score: 0';
     document.getElementById('timer-display').textContent = '--:--';
     document.getElementById('timer-display').classList.remove('urgent');
@@ -1882,9 +1916,11 @@ function renderRoomPlaying(data) {
 
     renderBoard();
     clearPathUI();
+    updateRoomScoreUI(); // show "Found: 0 / N" immediately
 
     setTimeout(() => {
-        calculateValidWords();
+        if (!preloadedWords) calculateValidWords(); // fallback: recompute from dict
+        else _buildCanonicalPaths();                // words already loaded, just build paths for tile hints
         updateTileHints();
         updateRoomScoreUI();
         startRoomCountdown(data.startedAt + (data.settings?.minutes || 3) * 60000);
@@ -1922,7 +1958,7 @@ function waitForAllScores(round) {
         const bail = setTimeout(() => { ref.off('value', check); resolve(); }, 5000);
         function check(snap) {
             const players = snap.val() || {};
-            const online = Object.values(players).filter(p => p.online !== false);
+            const online = Object.values(players).filter(p => p.online !== false && !p.skipping);
             if (online.length > 0 && online.every(p => p.rounds?.[round]?.score != null)) {
                 clearTimeout(bail);
                 ref.off('value', check);
@@ -1982,13 +2018,6 @@ function renderScoreboard(data) {
 
     const sb = document.getElementById('scoreboard-body');
     sb.innerHTML = '';
-
-    if (!pointsDone) {
-        const loader = document.createElement('div');
-        loader.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;font-size:0.82rem;color:var(--text-muted);font-weight:600;padding:4px 0 6px';
-        loader.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div>Calculating winner…';
-        sb.appendChild(loader);
-    }
 
     entries.forEach((e,i) => {
         const row=document.createElement('div');
