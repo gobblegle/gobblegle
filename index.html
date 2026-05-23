@@ -338,7 +338,7 @@
             <div style="display:flex;gap:8px">
                 <input class="field-input" type="text" id="player-name-input" placeholder="Enter your name" maxlength="20" style="flex:1"
                        onkeydown="if(event.key==='Enter')joinLobby()">
-                <button class="btn" onclick="joinLobby()">Join</button>
+                <button class="btn" id="join-lobby-btn" onclick="joinLobby()">Join</button>
             </div>
         </div>
 
@@ -431,6 +431,8 @@ const DICT_CACHE_KEY = 'G2_dict_v3';
 let boardRows = 5, boardCols = 5, boardCells = [], cellElements = [];
 let dictionary = new Set(), validWords = new Set(), foundWords = new Set();
 let wordCanonicalPaths = new Map(); // word -> { startKey, keys: number[] }
+let preloadedWords = null;    // pre-computed word list from Firebase (avoids full dict download)
+let gameWordSelections = new Map(); // word -> 'green'|'red', loaded from Firebase for host use
 let isSelecting = false, currentPath = [];
 let timerStarted = false, timerSeconds = 0, timerInterval = null, timerPaused = false;
 
@@ -469,6 +471,7 @@ function _pbGetTrie() {
     const root = Object.create(null);
     for (const word of dictionary) {
         if (word.length < 4 || word.length > 18) continue;
+        if (gameWordSelections.get(word) === 'red') continue;
         let n = root;
         for (const ch of word) { if (!n[ch]) n[ch] = Object.create(null); n = n[ch]; }
         n.$ = 1;
@@ -908,11 +911,16 @@ function processDictText(text) {
 
 // ── Board config (solo daily board) ───────────────────────────────────────
 async function loadBoardConfig() {
+    preloadedWords = null;
     try {
         if (db) {
             const snap = await db.ref('boardConfig').once('value');
             const cfg = snap.val();
-            if (cfg) { boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells; return; }
+            if (cfg) {
+                boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
+                if (cfg.words?.length) preloadedWords = new Set(cfg.words);
+                return;
+            }
         }
     } catch {}
     try {
@@ -920,6 +928,7 @@ async function loadBoardConfig() {
         if (!res.ok) throw new Error();
         const cfg = await res.json();
         boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
+        if (cfg.words?.length) preloadedWords = new Set(cfg.words);
     } catch {
         const b = generateBoard(3, 3, Math.random);
         boardRows = b.rows; boardCols = b.cols; boardCells = b.cells;
@@ -932,7 +941,7 @@ function getBoardHash() { return boardCells.flat().map(c => c||'_').join(''); }
 function saveProgress() {
     const h = getBoardHash();
     localStorage.setItem(`G2_found_${h}`, JSON.stringify([...foundWords]));
-    localStorage.setItem(`G2_timer_${h}`, JSON.stringify({ s: timerSeconds, started: timerStarted }));
+    localStorage.setItem(`G2_timer_${h}`, JSON.stringify({ s: timerSeconds, started: timerStarted, paused: timerPaused }));
 }
 function loadProgress() {
     const h = getBoardHash();
@@ -942,18 +951,25 @@ function loadProgress() {
     updateTimerDisplay();
     if (saved.started) {
         timerStarted = true;
-        timerPaused = false;
-        timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
+        if (saved.paused) {
+            timerPaused = true;
+            // timer stays paused (e.g. already won) — don't restart interval
+        } else {
+            timerPaused = false;
+            timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
+        }
     }
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
     setupPointerListeners();
-    await loadDictionary();
 
     const rid = new URLSearchParams(location.search).get('room');
+
     if (rid) {
+        // Room mode always needs full dictionary (host generates boards)
+        await loadDictionary();
         if (!db) {
             alert('Rooms require Firebase setup. See the REPLACE_ME fields in index.html.');
             history.replaceState({}, '', location.pathname);
@@ -963,8 +979,13 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // Solo mode
+    // Solo mode — load board config first; it may include pre-computed word list
     await loadBoardConfig();
+    if (preloadedWords) {
+        document.getElementById('loader').style.display = 'none';
+    } else {
+        await loadDictionary();
+    }
     loadProgress();
     calculateValidWords();
     renderBoard();
@@ -1475,6 +1496,12 @@ function canSpellOnBoard(word) {
 }
 function calculateValidWords() {
     validWords.clear();
+    if (preloadedWords) {
+        for (const word of preloadedWords) validWords.add(word);
+        _buildCanonicalPaths();
+        updateScoreUI();
+        return;
+    }
     const ls=new Set();
     for(let r=0;r<boardRows;r++) for(let c=0;c<boardCols;c++) if(boardCells[r]?.[c]) ls.add(boardCells[r][c]);
     for(const word of dictionary) {
@@ -1490,6 +1517,7 @@ function calculateValidWords() {
 function resetProgress() {
     foundWords.clear();
     resetTimer();
+    localStorage.removeItem('G2_share_time');
     saveProgress();
     updateScoreUI();
     clearPathUI();
@@ -1550,6 +1578,10 @@ async function createRoom() {
 }
 
 async function initRoomMode(rid) {
+    saveProgress(); // snapshot solo state before room board overwrites boardCells
+    pauseTimer();   // stop auto-save interval so it can't write under the wrong hash
+    await loadGameWordSelections(); // needed by host for filtered board generation
+
     roomMode  = true;
     roomId    = rid;
     playerId  = getPlayerId();
@@ -1643,7 +1675,9 @@ function renderLobby(data) {
     const hasJoined = !!myPlayer && myPlayer.online !== false;
     const myReady   = myPlayer?.ready || false;
 
-    document.getElementById('name-entry-card').style.display = hasJoined ? 'none' : '';
+    document.getElementById('name-entry-card').style.display = '';
+    const joinBtn = document.getElementById('join-lobby-btn');
+    if (joinBtn) joinBtn.textContent = hasJoined ? 'Update' : 'Join';
 
     const readyBtn = document.getElementById('ready-btn');
     readyBtn.disabled = !hasJoined;
@@ -1703,7 +1737,8 @@ async function joinLobby() {
         await roomRef.child(`players/${playerId}`).set({ name, gamePoints: 0, joined: Date.now(), online: true, ready: false });
     }
     roomRef.child(`players/${playerId}/online`).onDisconnect().set(false);
-    document.getElementById('name-entry-card').style.display = 'none';
+    const joinBtn = document.getElementById('join-lobby-btn');
+    if (joinBtn) joinBtn.textContent = 'Update';
 }
 
 async function toggleReady() {
@@ -1764,8 +1799,41 @@ function initMinutesPicker(initialValue) {
     requestAnimationFrame(() => { scroller.scrollTop = (initialValue-1)*40; });
 }
 
+// ── Room word support ───────────────────────────────────────────────────────
+async function loadGameWordSelections() {
+    if (!db) return;
+    try {
+        const snap = await db.ref('wordSelections').once('value');
+        gameWordSelections = new Map(Object.entries(snap.val() || {}));
+        _pbTrie = null; // rebuild trie with updated red-word filter
+    } catch {}
+}
+
+function computeRoomWords(board) {
+    if (!dictionary.size) return [];
+    const savedR = boardRows, savedC = boardCols, savedCells = boardCells;
+    boardRows = board.rows; boardCols = board.cols; boardCells = board.cells;
+    const ls = new Set();
+    for (let r = 0; r < boardRows; r++)
+        for (let c = 0; c < boardCols; c++)
+            if (boardCells[r]?.[c]) ls.add(boardCells[r][c]);
+    const words = [];
+    for (const word of dictionary) {
+        if (gameWordSelections.get(word) === 'red') continue;
+        let ok = true;
+        for (const ch of word) if (!ls.has(ch)) { ok = false; break; }
+        if (ok && canSpellOnBoard(word)) words.push(word);
+    }
+    boardRows = savedR; boardCols = savedC; boardCells = savedCells;
+    return words;
+}
+
 // ── Game start ─────────────────────────────────────────────────────────────
 async function autoStartGame(data) {
+    // Host only — ensure dictionary and word selections are loaded before generation
+    if (!dictionary.size) await loadDictionary();
+    await loadGameWordSelections();
+
     roomRef.child('state').transaction(
         cur => (cur === 'lobby' || cur === 'finished') ? 'playing' : undefined,
         async (err, committed) => {
@@ -1777,6 +1845,8 @@ async function autoStartGame(data) {
             const cols = s.cols || s.size || 4;
             const nextRound = (d.currentRound ?? -1) + 1;
             const board = s.mode === 'random' ? generateProceduralBoard(20) : generateShapedBoard(rows, cols);
+            const words = computeRoomWords(board);
+            if (words.length) board.words = words;
             const updates = { board, startedAt: Date.now(), currentRound: nextRound };
             for (const pid of Object.keys(d.players || {})) {
                 updates[`players/${pid}/closedScoreboard`] = false;
@@ -1798,6 +1868,7 @@ function renderRoomPlaying(data) {
     showPanel('game');
 
     boardRows = data.board.rows; boardCols = data.board.cols; boardCells = data.board.cells;
+    preloadedWords = data.board.words?.length ? new Set(data.board.words) : null;
     roomFoundWords   = new Set();
     roomScoreSubmitted = false;
     roomCurrentRound   = data.currentRound ?? 0;
@@ -2029,7 +2100,7 @@ async function leaveRoom() {
     if (roomCountdownInterval) { clearInterval(roomCountdownInterval); roomCountdownInterval=null; }
 
     // Reset room state
-    roomMode=false; roomId=null; roomFoundWords=new Set();
+    roomMode=false; roomId=null; roomFoundWords=new Set(); preloadedWords=null;
     roomPlayingInitialized=false; scoreBoardShown=false; roomScoreSubmitted=false;
     roomLastPlayedRound=-1;
 
@@ -2044,6 +2115,7 @@ async function leaveRoom() {
     // Reload solo board and progress
     resetTimer();
     await loadBoardConfig();
+    if (!preloadedWords) await loadDictionary();
     loadProgress();
     calculateValidWords();
     renderBoard();
