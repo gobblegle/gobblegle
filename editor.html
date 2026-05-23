@@ -429,25 +429,42 @@ function isConnected(cells, rows, cols) {
     return visited.size === lc.length;
 }
 
-// ── Word selections (stored in Firebase) ───────────────────────────────────
-let edWordSelections = new Set(); // words on the exclude list
+// ── Word selections ─────────────────────────────────────────────────────────
+const WORD_SEL_LS_KEY = 'G2_word_sel';
+let edWordSelections = new Set();
 
 async function loadWordSelections() {
-    if (!db) return;
+    // localStorage is primary — fast and always works
     try {
-        const snap = await db.ref('wordSelections').once('value');
-        edWordSelections = new Set(Object.keys(snap.val() || {}));
+        const saved = localStorage.getItem(WORD_SEL_LS_KEY);
+        if (saved) edWordSelections = new Set(JSON.parse(saved));
     } catch {}
+    // Firebase is secondary — merge in any keys found there
+    if (db) {
+        try {
+            const snap = await db.ref('wordSelections').once('value');
+            const val = snap.val();
+            if (val) {
+                for (const word of Object.keys(val)) edWordSelections.add(word);
+                _saveWordSelectionsLocal();
+            }
+        } catch {}
+    }
+}
+
+function _saveWordSelectionsLocal() {
+    try { localStorage.setItem(WORD_SEL_LS_KEY, JSON.stringify([...edWordSelections])); } catch {}
 }
 
 async function _toggleWordSel(word) {
     const excluded = edWordSelections.has(word);
-    if (excluded) {
-        edWordSelections.delete(word);
-        if (db) try { await db.ref(`wordSelections/${word}`).remove(); } catch {}
-    } else {
-        edWordSelections.add(word);
-        if (db) try { await db.ref(`wordSelections/${word}`).set(true); } catch {}
+    if (excluded) edWordSelections.delete(word); else edWordSelections.add(word);
+    _saveWordSelectionsLocal(); // persist immediately
+    if (db) { // Firebase best-effort
+        try {
+            if (!excluded) db.ref(`wordSelections/${word}`).set(true);
+            else db.ref(`wordSelections/${word}`).remove();
+        } catch {}
     }
     return !excluded; // true = now excluded
 }
