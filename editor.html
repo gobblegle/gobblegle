@@ -292,7 +292,8 @@ async function saveBoard() {
     showStatus('Saving…', 'info');
     try {
         const payload = { rows: editorRows, cols: editorCols, cells };
-        if (_edCurrentWords.length) payload.words = _edCurrentWords;
+        const activeWords = _edCurrentWords.filter(w => !edWordSelections.has(w));
+        if (activeWords.length) payload.words = activeWords;
         await db.ref('boardConfig').set(payload);
         showStatus('Board saved! Refresh the game to see the new board.', 'ok');
     } catch(e) {
@@ -530,13 +531,13 @@ function updateWordCount() {
     for (let r=0;r<editorRows;r++) for (let c=0;c<editorCols;c++) if (cells[r]?.[c]) ls.add(cells[r][c]);
     const words = [];
     for (const word of edDict) {
-        if (edWordSelections.has(word)) continue;
         let ok = true;
         for (const ch of word) if (!ls.has(ch)) { ok=false; break; }
         if (ok && edCanSpell(word, cells, editorRows, editorCols)) words.push(word);
     }
     _edCurrentWords = words;
-    el.textContent = words.length.toLocaleString();
+    const activeCount = words.filter(w => !edWordSelections.has(w)).length;
+    el.textContent = activeCount.toLocaleString();
     renderWordList();
 }
 
@@ -560,7 +561,7 @@ function renderWordList() {
         hdr.textContent = `${len}-letter (${wList.length})`;
         sec.appendChild(hdr);
         const chips = document.createElement('div'); chips.className = 'word-chips';
-        wList.forEach(w => { const c = document.createElement('span'); c.className = 'word-chip'; c.textContent = w; chips.appendChild(c); });
+        wList.forEach(w => { const c = document.createElement('span'); c.className = 'word-chip'; c.textContent = w; if (edWordSelections.has(w)) c.style.color = 'var(--error)'; chips.appendChild(c); });
         sec.appendChild(chips);
         container.appendChild(sec);
     });
