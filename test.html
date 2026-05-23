@@ -1,0 +1,2154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <title>Gobblegle — Test Mode</title>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+    <link rel="manifest" href="site.webmanifest">
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <style>
+        :root {
+            --primary: #c2410c;
+            --primary-hover: #9a3412;
+            --bg: #fdf8f4;
+            --surface: #ffffff;
+            --text: #1c0a00;
+            --text-muted: #78614f;
+            --border: #e8d5c4;
+            --cell-active: #ffedd5;
+            --cell-border-active: #fb923c;
+            --error: #c9605a;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg); color: var(--text);
+            min-height: 100vh; display: flex; flex-direction: column;
+            align-items: center; overflow-x: hidden; touch-action: manipulation;
+        }
+
+        /* ── Header ── */
+        header {
+            width: 100%; max-width: 540px; padding: 14px 16px;
+            display: flex; justify-content: center; align-items: center;
+            border-bottom: 1px solid var(--border); background: var(--surface);
+            position: relative;
+        }
+        .header-title { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+        .header-title img { height: 38px; width: auto; display: block; }
+        .header-subtitle { font-size: 0.95rem; font-weight: 700; color: var(--text); }
+        .room-create-btn {
+            position: absolute; right: 16px;
+            background: var(--cell-active); color: var(--primary);
+            border: 1px solid var(--cell-border-active);
+            width: 38px; height: 38px; border-radius: 10px;
+            font-size: 1.35rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+            line-height: 1;
+        }
+        .room-create-btn:hover { background: var(--cell-border-active); color: #fff; }
+
+        /* ── Room bar (shown during room game play) ── */
+        .room-bar {
+            display: none; width: 100%; max-width: 540px;
+            padding: 8px 16px; background: var(--cell-active);
+            border-bottom: 1px solid var(--cell-border-active);
+            align-items: center; justify-content: space-between;
+        }
+        .room-bar.visible { display: flex; }
+        .room-code-label { font-weight: 800; color: var(--primary); letter-spacing: 0.1em; font-size: 0.9rem; }
+        .bar-btn { padding: 5px 11px; border-radius: 7px; font-size: 0.8rem; font-weight: 600; cursor: pointer; border: none; font-family: inherit; }
+        .bar-btn-primary { background: var(--primary); color: #fff; }
+        .bar-btn-primary:hover { background: var(--primary-hover); }
+        .bar-btn-sec { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+        .bar-btn-sec:hover { background: var(--bg); color: var(--text); }
+
+        /* ── Solo game container ── */
+        .game-container {
+            width: 100%; max-width: 540px; padding: 14px 16px;
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        .info-bar {
+            display: flex; justify-content: space-between; align-items: center;
+            background: var(--surface); padding: 10px 14px; border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .score-wrap { position: relative; }
+        .score-btn {
+            background: var(--cell-active); color: var(--primary);
+            border: 1px solid var(--cell-border-active);
+            padding: 5px 12px; border-radius: 8px; font-weight: 700;
+            font-size: 0.95rem; cursor: pointer; font-family: inherit;
+        }
+        .score-btn:hover { background: var(--cell-border-active); color: #fff; }
+        .word-popup {
+            position: absolute; top: calc(100% + 6px); left: 0;
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 12px; padding: 12px 14px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+            min-width: 230px; max-height: 60vh; overflow-y: auto; z-index: 60;
+        }
+        .popup-section { border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 4px; }
+        .popup-section:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
+        .popup-reset {
+            display: block; width: 100%; margin-top: 10px; padding: 7px 0;
+            background: none; border: 1px solid var(--border); border-radius: 8px;
+            color: var(--text-muted); font-size: 0.85rem; font-weight: 600;
+            cursor: pointer; text-align: center; font-family: inherit;
+        }
+        .popup-reset:hover { background: #fff1f1; color: var(--error); border-color: var(--error); }
+        .popup-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 0.9rem; }
+        .popup-label { font-weight: 600; color: var(--text-muted); }
+        .popup-count { font-weight: 700; color: var(--primary); }
+        .popup-words { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 3px 0 6px; }
+        .popup-chip { color: var(--text); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+
+        .current-word {
+            min-height: 46px; display: flex; align-items: center;
+            justify-content: center; font-size: 1.9rem; font-weight: 800;
+            letter-spacing: 0.1em; color: #3a3a3a;
+            background: var(--surface); border-radius: 12px;
+        }
+        .current-word.found    { color: #22c55e; }
+        .current-word.already  { color: #94a3b8; }
+        .current-word.error    { color: var(--error); }
+        .current-word.small    { font-size: 1.1rem; }
+        .current-word.settling { transition: opacity 0.6s ease; }
+
+        .board-container {
+            position: relative; touch-action: none; overflow: visible;
+            width: fit-content; margin: 0 auto;
+        }
+        .grid { display: grid; gap: 8px; }
+        .grid-cell {
+            background: #fff; border: 2px solid var(--border); border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: var(--cell-font, 2.5rem); font-weight: 700; text-transform: uppercase;
+            width: var(--cell-size, 54px); height: var(--cell-size, 54px);
+            transition: background 0.1s, border-color 0.1s, transform 0.1s;
+            position: relative; z-index: 2;
+        }
+        .grid-cell.active { background: var(--cell-active); border-color: var(--cell-border-active); transform: scale(0.93); }
+        .grid-cell.empty  { background: transparent; border: none; pointer-events: none; }
+        .grid-cell.exhausted:not(.active) { color: #c0c0c0; border-color: #ede5dc; }
+        .tile-hint-start { position:absolute; bottom:3px; left:4px; font-size:calc(var(--cell-font) * 0.3); font-weight:700; color:#fb923c; line-height:1; pointer-events:none; }
+        .tile-hint-usage { position:absolute; bottom:3px; right:4px; font-size:calc(var(--cell-font) * 0.3); font-weight:700; color:#94a3b8; line-height:1; pointer-events:none; }
+        .svg-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+
+        .timer { text-align: center; font-size: 1.1rem; font-weight: 700; color: var(--text-muted); letter-spacing: 0.12em; }
+        .timer.urgent { color: var(--error); animation: pulse 1s infinite; }
+        @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.6} }
+
+        .loader {
+            position: fixed; inset: 0; background: var(--surface);
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: center; z-index: 200; gap: 12px; font-weight: 600;
+        }
+        .spinner { width: 40px; height: 40px; border: 4px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ── Room overlay ── */
+        .room-overlay {
+            position: fixed; inset: 0; background: var(--bg);
+            display: none; flex-direction: column; align-items: center;
+            overflow-y: auto; z-index: 50; padding-bottom: 40px;
+        }
+        .room-overlay.visible { display: flex; }
+        .room-panel { width: 100%; max-width: 540px; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+
+        /* ── Shared card ── */
+        .card { background: var(--surface); border-radius: 14px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); display: flex; flex-direction: column; gap: 12px; }
+        .card-title { font-size: 1rem; font-weight: 700; }
+        .hint { font-size: 0.8rem; color: var(--text-muted); line-height: 1.5; }
+        .field-input { width: 100%; padding: 9px 11px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 0.9rem; background: var(--bg); color: var(--text); outline: none; font-family: inherit; }
+        .field-input:focus { border-color: var(--primary); }
+
+        /* ── Lobby header ── */
+        .lobby-hdr {
+            display: flex; align-items: center; justify-content: space-between;
+            background: var(--surface); border-radius: 14px; padding: 16px 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06); margin-top: 16px;
+            flex-wrap: wrap; gap: 10px;
+        }
+        .lobby-code { font-size: 1.6rem; font-weight: 900; letter-spacing: 0.2em; color: var(--primary); }
+        .lobby-hdr-btns { display: flex; gap: 8px; }
+
+        /* ── Players ── */
+        .player-list { display: flex; flex-direction: column; gap: 6px; min-height: 36px; }
+        .player-item { padding: 9px 14px; background: var(--bg); border-radius: 9px; font-weight: 600; font-size: 0.9rem; display: flex; align-items: center; gap: 10px; }
+        .player-item.me { border-left: 3px solid var(--primary); }
+        .player-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cell-border-active); flex-shrink: 0; }
+
+        /* ── Settings ── */
+        .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .setting-label { font-size: 0.88rem; font-weight: 600; color: var(--text-muted); flex-shrink: 0; }
+        .size-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+        .size-tab { padding: 6px 13px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--bg); font-weight: 600; font-size: 0.85rem; cursor: pointer; font-family: inherit; }
+        .size-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+        .size-tab:hover:not(.active) { background: var(--cell-active); }
+        .minutes-wrap { display: flex; align-items: center; gap: 8px; }
+        .minutes-input { width: 64px; text-align: center; padding: 6px 8px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 0.95rem; font-weight: 700; background: var(--bg); color: var(--text); outline: none; font-family: inherit; }
+        .minutes-input:focus { border-color: var(--primary); }
+
+        /* ── Buttons ── */
+        .btn { background: var(--primary); color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; font-size: 0.9rem; cursor: pointer; font-family: inherit; }
+        .btn:hover { background: var(--primary-hover); }
+        .btn:disabled { opacity: 0.45; cursor: default; }
+        .btn-outline { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+        .btn-outline:hover:not(:disabled) { background: var(--bg); color: var(--text); }
+        .btn-sm { font-size: 0.85rem; padding: 7px 13px; }
+        .btn-full { width: 100%; padding: 13px; font-size: 1rem; }
+
+        /* ── Scoreboard ── */
+        .sb-title { font-size: 1.15rem; font-weight: 900; text-align: center; }
+        .scoreboard { display: flex; flex-direction: column; gap: 8px; }
+        .score-row { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 12px 16px; background: var(--surface); border-radius: 11px; }
+        .score-row.gold { border: 2px solid var(--primary); background: var(--cell-active); }
+        .score-name { font-weight: 700; font-size: 0.95rem; }
+        .score-gp   { font-weight: 800; color: var(--primary); font-size: 0.95rem; text-align: right; min-width: 48px; }
+        .score-rnd  { color: var(--text-muted); font-weight: 600; font-size: 0.82rem; text-align: right; min-width: 52px; }
+
+        /* ── Scroll picker ── */
+        .picker-outer { position: relative; height: 120px; overflow: hidden; border: 1.5px solid var(--border); border-radius: 10px; background: var(--bg); }
+        .picker-scroller { height: 100%; overflow-y: scroll; scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+        .picker-scroller::-webkit-scrollbar { display: none; }
+        .picker-item { height: 40px; scroll-snap-align: center; display: flex; align-items: center; justify-content: center; font-size: 1rem; font-weight: 600; color: var(--text-muted); }
+        .picker-pad  { height: 40px; flex-shrink: 0; }
+        .picker-highlight { position: absolute; top: 40px; height: 40px; left: 0; right: 0; border-top: 2px solid var(--cell-border-active); border-bottom: 2px solid var(--cell-border-active); pointer-events: none; background: rgba(251,146,60,0.1); }
+
+        /* ── Ready button ── */
+        .btn-green { background: #16a34a; }
+        .btn-green:hover { background: #15803d; }
+
+        /* ── Player ready badge ── */
+        .ready-badge { margin-left: auto; font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 5px; }
+        .ready-badge.yes { background: #dcfce7; color: #16a34a; }
+        .ready-badge.no  { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); }
+
+        /* ── Room menu dropdown ── */
+        .room-menu {
+            position: absolute; right: 16px; top: calc(100% + 6px);
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 12px; padding: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.13);
+            display: flex; flex-direction: column; z-index: 100; min-width: 178px;
+        }
+        .room-menu-item {
+            padding: 9px 12px; border-radius: 8px; border: none; background: none;
+            text-align: left; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+            font-family: inherit; color: var(--text); width: 100%;
+        }
+        .room-menu-item:hover { background: var(--cell-active); color: var(--primary); }
+
+        .score-row { cursor: pointer; }
+
+        /* ── Player words modal ── */
+        .player-modal-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+            z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px;
+        }
+        .player-modal {
+            background: var(--surface); border-radius: 16px; padding: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.25); width: 100%; max-width: 320px;
+            max-height: 65vh; display: flex; flex-direction: column; gap: 12px;
+        }
+        .player-modal-hdr { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+        .player-modal-title { font-size: 1rem; font-weight: 800; }
+        .player-modal-body { overflow-y: auto; flex: 1; }
+        #test-banner {
+            width: 100%; background: #1e3a5f; color: #fff;
+            font-size: 0.78rem; font-weight: 700; text-align: center;
+            padding: 5px 12px; letter-spacing: 0.06em; text-transform: uppercase;
+            display: flex; align-items: center; justify-content: center; gap: 12px;
+        }
+        #test-banner a { color: #93c5fd; text-decoration: none; font-weight: 600; }
+        #test-banner a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+
+<div id="test-banner">
+    Test Mode — board not saved &nbsp;·&nbsp; <a href="editor.html">← Back to Editor</a>
+</div>
+
+<div class="loader" id="loader">
+    <div class="spinner"></div>
+    <div id="loader-text">Loading Dictionary…</div>
+</div>
+
+<header>
+    <div class="header-title">
+        <div style="display:flex;align-items:center;gap:8px;">
+            <img src="gobblegleturkey.png" alt="">
+            <img src="gobblegletitle.png" alt="Gobblegle">
+        </div>
+        <div class="header-subtitle">A double-back path finding word game</div>
+    </div>
+    <button class="room-create-btn" id="start-room-btn" style="display:none">🚪</button>
+    <div class="room-menu" id="room-menu" style="display:none">
+        <button class="room-menu-item" onclick="startRoomFromMenu()">Start a Room</button>
+        <button class="room-menu-item" onclick="showJoinInput()">Join a Room</button>
+        <div id="join-code-row" style="display:none;padding:0 4px 4px">
+            <div style="display:flex;gap:6px;margin-top:6px">
+                <input class="field-input" type="text" id="join-code-input" placeholder="Room code" maxlength="6"
+                       style="flex:1;text-transform:uppercase;letter-spacing:0.12em;font-weight:700;font-size:0.95rem"
+                       onkeydown="if(event.key==='Enter')joinRoomByCode()">
+                <button class="btn" style="padding:9px 14px" onclick="joinRoomByCode()">Go</button>
+            </div>
+        </div>
+    </div>
+</header>
+
+<div class="room-bar" id="room-bar">
+    <span class="room-code-label" id="room-code-label"></span>
+    <div style="display:flex;gap:8px">
+        <button class="bar-btn bar-btn-primary" onclick="shareRoom()">Share</button>
+        <button class="bar-btn bar-btn-sec"     onclick="leaveRoom()">Leave</button>
+    </div>
+</div>
+
+<div class="game-container" id="game-container">
+    <div class="info-bar" id="info-bar">
+        <div class="score-wrap">
+            <button class="score-btn" id="score-btn" onclick="togglePopup(event)">Found: 0 / --</button>
+            <div class="word-popup" id="word-popup" style="display:none;"></div>
+        </div>
+        <span id="room-score-display" style="font-size:0.95rem;font-weight:700;color:var(--text)">Score: 0</span>
+    </div>
+    <div class="current-word" id="word-preview"></div>
+    <div id="board-wrapper" style="position:relative;margin:0 auto;">
+        <button id="share-btn" onclick="shareGame()" title="Share your result" style="position:absolute;top:0;left:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'">🦃</button>
+        <div id="win-msg" style="display:none;position:absolute;top:0;left:0;right:0;height:34px;align-items:center;justify-content:center;font-size:0.88rem;font-weight:800;color:var(--primary);letter-spacing:0.08em;pointer-events:none;">YOU WIN!</div>
+        <button id="rotate-btn" onclick="rotateBoard()" title="Rotate board 90°" style="position:absolute;top:0;right:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;color:var(--text-muted);opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'">↻</button>
+        <div class="board-container" id="board-container">
+            <svg class="svg-overlay" id="svg-overlay"></svg>
+            <div class="grid" id="grid"></div>
+        </div>
+    </div>
+    <div class="timer" id="timer-display">00:00</div>
+</div>
+
+<div class="room-overlay" id="room-overlay">
+
+    <!-- Lobby -->
+    <div id="lobby-panel" class="room-panel">
+        <div class="lobby-hdr">
+            <span class="lobby-code" id="lobby-code"></span>
+            <div class="lobby-hdr-btns">
+                <button class="btn btn-sm" onclick="shareRoom()">Share</button>
+                <button class="btn btn-outline btn-sm" onclick="leaveRoom()">Leave</button>
+            </div>
+        </div>
+
+        <div class="card" id="name-entry-card">
+            <div class="card-title">Your Name</div>
+            <div style="display:flex;gap:8px">
+                <input class="field-input" type="text" id="player-name-input" placeholder="Enter your name" maxlength="20" style="flex:1"
+                       onkeydown="if(event.key==='Enter')joinLobby()">
+                <button class="btn" id="join-lobby-btn" onclick="joinLobby()">Join</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Players</div>
+            <div class="player-list" id="player-list">
+                <div class="hint">No players yet…</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Game Settings</div>
+            <div class="setting-row">
+                <span class="setting-label">Board Size</span>
+                <div class="size-tabs">
+                    <button class="size-tab" data-r="3" data-c="3" onclick="setRoomSize(3,3)">3×3</button>
+                    <button class="size-tab active" data-r="4" data-c="4" onclick="setRoomSize(4,4)">4×4</button>
+                    <button class="size-tab" data-r="5" data-c="5" onclick="setRoomSize(5,5)">5×5</button>
+                    <button class="size-tab" data-r="0" data-c="0" onclick="setRoomSizeCustom()">Custom</button>
+                    <button class="size-tab" data-r="-1" data-c="-1" onclick="setRoomSizeRandom()">Random</button>
+                </div>
+            </div>
+            <div class="setting-row" id="custom-size-row" style="display:none">
+                <span class="setting-label">Rows × Cols</span>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <input class="minutes-input" type="number" id="custom-rows" min="2" max="10" value="5"
+                           onchange="applyCustomSize()">
+                    <span class="hint">×</span>
+                    <input class="minutes-input" type="number" id="custom-cols" min="2" max="10" value="5"
+                           onchange="applyCustomSize()">
+                </div>
+            </div>
+            <div class="setting-row">
+                <span class="setting-label">Time Limit</span>
+                <div class="picker-outer" style="width:120px">
+                    <div class="picker-scroller" id="minutes-picker"></div>
+                    <div class="picker-highlight"></div>
+                </div>
+            </div>
+        </div>
+
+        <button class="btn btn-full" id="ready-btn" onclick="toggleReady()" disabled>I'm Ready</button>
+    </div>
+
+    <!-- Scoreboard -->
+    <div id="scoreboard-panel" class="room-panel" style="display:none; overflow-y:auto; max-height:calc(100vh - 32px); padding-top:0;">
+        <div style="position:sticky;top:0;z-index:5;background:var(--bg);padding:16px 0 10px;">
+            <button class="btn btn-full" onclick="closeScoreboard()">Close</button>
+        </div>
+        <div class="lobby-hdr" style="justify-content:center">
+            <span class="sb-title">Game Over</span>
+        </div>
+        <div class="scoreboard" id="scoreboard-body" style="padding-bottom:16px;"></div>
+    </div>
+
+</div>
+
+<script>
+// ── Scoring table ──────────────────────────────────────────────────────────
+// index = word length; 4=3, 5=4, 6=6, 7=8, 8=11, 9=14, 10=18, 11=23, 12=29, 13=36, 14=44, 15=53, 16+=63
+const SCORE_TABLE = [0,0,0,0,3,4,6,8,11,14,18,23,29,36,44,53];
+function wordScore(n)  { return n >= 16 ? 63 : (SCORE_TABLE[n] || 0); }
+function totalScore(words) { return [...words].reduce((s,w) => s + wordScore(w.length), 0); }
+
+// ── Letter pool for random board generation (frequency-weighted) ───────────
+const LETTER_POOL = 'EEEEEEEEEEEEAAAAAAAAOOOOOOOOTTTTTTTTTIIIIIIIINNNNNNNSSSSSSHHHHHHRRRRRRDDDLLLCCUUUMWWFFGGYYPBVKJXQZ';
+
+// ── Firebase ───────────────────────────────────────────────────────────────
+// Paste your Firebase config here (firebase.google.com → Project Settings → Your apps)
+const firebaseConfig = {
+  apiKey: "AIzaSyC5l8bUB0Yf4SofYtIl0l3vQY8qw3wVflA",
+  authDomain: "gobblegle.firebaseapp.com",
+  databaseURL: "https://gobblegle-default-rtdb.firebaseio.com",
+  projectId: "gobblegle",
+  storageBucket: "gobblegle.firebasestorage.app",
+  messagingSenderId: "84213433658",
+  appId: "1:84213433658:web:b4a47e6c2d3fc76b35bc03",
+  measurementId: "G-TJERN9C80N"
+};
+let db = null;
+try {
+    if (firebaseConfig.apiKey !== 'REPLACE_ME') {
+        firebase.initializeApp(firebaseConfig);
+        db = firebase.database();
+    }
+} catch(e) { console.warn('Firebase not initialized:', e); }
+
+// ── State ──────────────────────────────────────────────────────────────────
+const DICT_CACHE_KEY = 'G2_dict_v3';
+let boardRows = 5, boardCols = 5, boardCells = [], cellElements = [];
+let dictionary = new Set(), validWords = new Set(), foundWords = new Set();
+let wordCanonicalPaths = new Map(); // word -> { startKey, keys: number[] }
+let preloadedWords = null;    // pre-computed word list from Firebase (avoids full dict download)
+let gameWordSelections = new Set(); // excluded words loaded from Firebase
+let isSelecting = false, currentPath = [];
+let timerStarted = false, timerSeconds = 0, timerInterval = null, timerPaused = false;
+
+// Room state
+let roomMode = false, roomId = null, playerId = null;
+let roomFoundWords = new Set(), roomRef = null;
+let roomCurrentRound = 0, roomLastPlayedRound = -1, roomScoreSubmitted = false;
+let roomPlayingInitialized = false, scoreBoardShown = false;
+let roomCountdownInterval = null;
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function mulberry32(seed) {
+    return function() {
+        let t = seed += 0x6D2B79F5;
+        t = Math.imul(t ^ t >>> 15, t | 1);
+        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+}
+
+function generateBoard(rows, cols, rndFn) {
+    const cells = [];
+    for (let r = 0; r < rows; r++) {
+        cells[r] = [];
+        for (let c = 0; c < cols; c++)
+            cells[r][c] = LETTER_POOL[Math.floor(rndFn() * LETTER_POOL.length)];
+    }
+    return { rows, cols, cells };
+}
+
+// ── Procedural board generator ──────────────────────────────────────────────
+let _pbTrie = null;
+
+function _pbGetTrie() {
+    if (_pbTrie) return _pbTrie;
+    const root = Object.create(null);
+    for (const word of dictionary) {
+        if (word.length < 4 || word.length > 18) continue;
+        if (gameWordSelections.has(word)) continue;
+        let n = root;
+        for (const ch of word) { if (!n[ch]) n[ch] = Object.create(null); n = n[ch]; }
+        n.$ = 1;
+    }
+    return (_pbTrie = root);
+}
+
+function _pbGaussian(mu, sigma) {
+    const u1 = Math.random() || 1e-10, u2 = Math.random();
+    const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    return Math.min(25, Math.max(6, Math.round(mu + sigma * z)));
+}
+
+function _pbGrowShape(target) {
+    const S = 5;
+    const adj4 = id => { const r=id/S|0,c=id%S,a=[]; if(r>0)a.push(id-S); if(r<S-1)a.push(id+S); if(c>0)a.push(id-1); if(c<S-1)a.push(id+1); return a; };
+    const adj8 = id => { const r=id/S|0,c=id%S,a=[]; for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){if(!dr&&!dc)continue; const nr=r+dr,nc=c+dc; if(nr>=0&&nr<S&&nc>=0&&nc<S)a.push(nr*S+nc);} return a; };
+
+    const occupied = new Set();
+    const fSet = new Set(), fArr = [];
+    const start = Math.random() * 25 | 0;
+    occupied.add(start);
+    for (const nb of adj4(start)) { fSet.add(nb); fArr.push(nb); }
+
+    while (occupied.size < target && fArr.length > 0) {
+        const i = Math.random() * fArr.length | 0;
+        const cell = fArr[i]; fArr.splice(i, 1); fSet.delete(cell);
+        occupied.add(cell);
+        for (const nb of adj4(cell)) if (!occupied.has(nb) && !fSet.has(nb)) { fSet.add(nb); fArr.push(nb); }
+    }
+
+    const nodes = [], idxOf = new Map();
+    for (const id of occupied) { idxOf.set(id, nodes.length); nodes.push({ id, coord:{r:id/S|0,c:id%S}, letter:'', isQU:false, neighbors:[] }); }
+    for (const node of nodes) for (const nid of adj8(node.id)) if (occupied.has(nid)) node.neighbors.push(idxOf.get(nid));
+    return nodes;
+}
+
+function _pbTopologyOk(graph) {
+    const n = graph.length;
+    if (graph.filter(nd => nd.neighbors.length <= 2).length / n >= 0.85) return false;
+    if (n >= 6 && n <= 8 && !graph.some(nd => nd.neighbors.length >= 3)) return false;
+    return true;
+}
+
+// ── Morpheme-seeded letter assignment ──────────────────────────────────────
+// Suffix morphemes with weights — seeded onto high-degree paths so many word
+// stems can reach the morpheme's entry cell (capitalises on double-back paths).
+const _PB_SUFFIXES = [
+    ['ING',40],['ION',20],['EST',15],['ER',12],['ED',8],['LY',8],
+    ['TION',6],['NESS',6],['MENT',5],['ABLE',4],['OUS',3],['LESS',3]
+];
+// Prefix morphemes — seeded on larger boards where the last cell connects outward to stems.
+const _PB_PREFIXES = [['RE',25],['UN',18],['CON',12],['PRE',10],['OUT',8]];
+
+function _pbWeightedPick(arr) {
+    let r = Math.random() * arr.reduce((s,[,w]) => s+w, 0);
+    for (const [v,w] of arr) { r -= w; if (r <= 0) return v; }
+    return arr[arr.length-1][0];
+}
+
+// Find up to MAX simple paths of length k in graph, avoiding excluded indices.
+// Returns paths sorted by total-degree score descending.
+function _pbFindPaths(graph, k, excluded) {
+    const paths = [], MAX = 200;
+    function dfs(path, vis) {
+        if (paths.length >= MAX) return;
+        if (path.length === k) {
+            paths.push({ nodes:[...path], score: path.reduce((s,i) => s+graph[i].neighbors.length, 0) });
+            return;
+        }
+        for (const ni of graph[path[path.length-1]].neighbors) {
+            if (!vis.has(ni) && !excluded.has(ni)) {
+                vis.add(ni); path.push(ni); dfs(path, vis); path.pop(); vis.delete(ni);
+                if (paths.length >= MAX) return;
+            }
+        }
+    }
+    for (let i = 0; i < graph.length && paths.length < MAX; i++)
+        if (!excluded.has(i)) dfs([i], new Set([i]));
+    paths.sort((a,b) => b.score - a.score);
+    return paths;
+}
+
+// Main letter assignment: seed morphemes onto high-connectivity paths, then
+// fill remaining cells by structural role (hub / mid / leaf).
+function _pbSeedAndFill(graph) {
+    const locked = new Set(), n = graph.length;
+    const isV = c => 'AEIOU'.includes(c);
+
+    // ── QU unit (15% chance on boards ≥ 8 cells) ─────────────────────
+    // Treat QU as a single seeded unit on a well-connected edge so QUITE,
+    // QUEEN, QUEST, etc. are reachable from multiple directions.
+    if (n >= 8 && Math.random() < 0.15) {
+        const edges = [];
+        for (let i = 0; i < n; i++) {
+            if (graph[i].neighbors.length < 3) continue;
+            for (const j of graph[i].neighbors)
+                if (j > i && graph[j].neighbors.length >= 2)
+                    edges.push([i, j, graph[i].neighbors.length + graph[j].neighbors.length]);
+        }
+        if (edges.length) {
+            edges.sort((a,b) => b[2]-a[2]);
+            const [qi, ui] = edges[Math.random() * Math.min(3, edges.length) | 0];
+            graph[qi].letter = 'Q'; graph[ui].letter = 'U'; graph[ui].isQU = true;
+            locked.add(qi); locked.add(ui);
+        }
+    }
+
+    // ── Suffix seed ───────────────────────────────────────────────────
+    // First morpheme letter (e.g. 'I' in ING) goes on the path cell with the
+    // most external (non-path) neighbors, so the largest variety of stems can
+    // lead into the morpheme.
+    const sfx = _PB_SUFFIXES.filter(([s]) => s.length <= n - locked.size - 3);
+    if (sfx.length) {
+        const m = _pbWeightedPick(sfx);
+        const paths = _pbFindPaths(graph, m.length, locked);
+        if (paths.length) {
+            const pick = paths[Math.random() * Math.min(4, paths.length) | 0].nodes;
+            const pset = new Set(pick);
+            const ext = i => graph[i].neighbors.filter(ni => !pset.has(ni)).length;
+            const rev = [...pick].reverse();
+            const ord = ext(rev[0]) > ext(pick[0]) ? rev : pick;
+            for (let j = 0; j < m.length; j++) { graph[ord[j]].letter = m[j]; locked.add(ord[j]); }
+        }
+    }
+
+    // ── Prefix seed (boards ≥ 14 cells) ──────────────────────────────
+    // Last morpheme letter (e.g. 'E' in RE) goes on the cell with the most
+    // external neighbors, so the word stems after the prefix can branch widely.
+    if (n >= 14 && n - locked.size >= 8) {
+        const pfx = _PB_PREFIXES.filter(([p]) => p.length <= n - locked.size - 4);
+        if (pfx.length) {
+            const m = _pbWeightedPick(pfx);
+            const paths = _pbFindPaths(graph, m.length, locked);
+            if (paths.length) {
+                const pick = paths[Math.random() * Math.min(4, paths.length) | 0].nodes;
+                const pset = new Set(pick);
+                const ext = i => graph[i].neighbors.filter(ni => !pset.has(ni)).length;
+                const rev = [...pick].reverse();
+                const k = m.length - 1;
+                const ord = ext(rev[k]) > ext(pick[k]) ? rev : pick;
+                for (let j = 0; j < m.length; j++) { graph[ord[j]].letter = m[j]; locked.add(ord[j]); }
+            }
+        }
+    }
+
+    // ── Topology-aware fill for remaining cells ───────────────────────
+    // Hub cells (high degree) get high-frequency word-building letters.
+    // Leaf cells (degree 1) get common word-ending letters.
+    const VP = 'EEEEEEEEEEEEAAAAAAAIIIIIIIOOOOOOUUUYYY';
+    const HD = 'SSSSSTTTTTRRRRRNNNNNDDDDDLLLLLCCCCMMMPPP'; // hub consonants
+    const MD = 'SSTTRRNNDLCMBPGWF';                        // mid-degree
+    const LF = 'SSSSDDRRYNNTLL';                           // leaf endings
+
+    const unlocked = [];
+    for (let i = 0; i < n; i++) if (!locked.has(i)) unlocked.push(i);
+    unlocked.sort((a,b) => graph[b].neighbors.length - graph[a].neighbors.length);
+
+    const maxRep = Math.max(1, Math.ceil(n / 7));
+    const counts = {};
+    for (const i of locked) { const ch = graph[i].letter; counts[ch] = (counts[ch]||0) + 1; }
+
+    const draw = pool => {
+        for (let t = 0; t < 50; t++) {
+            const ch = pool[Math.random()*pool.length|0];
+            if ((counts[ch]||0) < maxRep) { counts[ch]=(counts[ch]||0)+1; return ch; }
+        }
+        return pool[Math.random()*pool.length|0];
+    };
+
+    let vCount = [...locked].filter(i => isV(graph[i].letter)).length;
+    const targetV = Math.round(n * 0.40);
+    const topN = Math.ceil(unlocked.length * 0.35);
+
+    for (let rank = 0; rank < unlocked.length; rank++) {
+        const i = unlocked[rank];
+        const deg = graph[i].neighbors.length;
+        // Bias toward a vowel if we're behind target, or if locked neighbors are all consonants
+        const consonantCluster = graph[i].neighbors.filter(ni => locked.has(ni)).every(ni => !isV(graph[ni].letter));
+        const wantV = vCount < targetV && (consonantCluster || Math.random() < 0.42);
+        let letter;
+        if (wantV)         { letter = draw(VP); if (isV(letter)) vCount++; }
+        else if (deg === 1) { letter = draw(LF); }
+        else if (rank < topN){ letter = draw(HD); }
+        else                { letter = draw(MD); }
+        graph[i].letter = letter;
+        locked.add(i);
+    }
+
+    // ── Vowel coverage pass ───────────────────────────────────────────
+    // Ensure every consonant has at least one adjacent vowel. Convert the
+    // lowest-degree neighbor that isn't QU.
+    for (let i = 0; i < n; i++) {
+        if (isV(graph[i].letter) || graph[i].isQU) continue;
+        if (graph[i].neighbors.some(ni => isV(graph[ni].letter))) continue;
+        if (!graph[i].neighbors.length) continue;
+        const cands = graph[i].neighbors
+            .filter(ni => !graph[ni].isQU)
+            .sort((a,b) => graph[a].neighbors.length - graph[b].neighbors.length);
+        if (cands.length) graph[cands[0]].letter = 'EAIO'[Math.random()*4|0];
+    }
+
+    // ── Rare letter cleanup ───────────────────────────────────────────
+    const safe = 'STNRLDCGMP';
+    for (let i = 0; i < n; i++) {
+        const nd = graph[i];
+        if (nd.isQU) continue;
+        // J/X/Z/V on a leaf or without adjacent vowel → replace
+        if ('JXZV'.includes(nd.letter) &&
+            (nd.neighbors.length <= 1 || !nd.neighbors.some(ni => isV(graph[ni].letter))))
+            nd.letter = safe[Math.random()*safe.length|0];
+        // J/K must have adjacent vowel to form words; if not, give one to a neighbor
+        if ('JK'.includes(nd.letter) && !nd.neighbors.some(ni => isV(graph[ni].letter))) {
+            const cands = nd.neighbors.filter(ni => !graph[ni].isQU);
+            if (cands.length)
+                graph[cands[Math.random()*cands.length|0]].letter = 'EAIO'[Math.random()*4|0];
+        }
+    }
+}
+
+function _pbFindCovered(graph, trie) {
+    const n = graph.length, covered = new Set();
+    function dfs(ni, trNode, depth, vis) {
+        if (vis.has(ni)) return;
+        const next = trNode[graph[ni].letter];
+        if (!next) return;
+        vis.add(ni);
+        if (depth >= 4 && next.$) for (const idx of vis) covered.add(idx);
+        if (depth < 18 && covered.size < n) for (const nni of graph[ni].neighbors) dfs(nni, next, depth+1, vis);
+        vis.delete(ni);
+    }
+    for (let i=0; i<n && covered.size<n; i++) dfs(i, trie, 1, new Set());
+    return covered;
+}
+
+function _pbCanCoverNode(nodeIdx, graph, trie) {
+    function dfs(ni, trNode, depth, vis) {
+        if (vis.has(ni)) return false;
+        const next = trNode[graph[ni].letter];
+        if (!next) return false;
+        vis.add(ni);
+        if (depth >= 4 && next.$ && vis.has(nodeIdx)) { vis.delete(ni); return true; }
+        if (depth < 18) for (const nni of graph[ni].neighbors) if (dfs(nni, next, depth+1, vis)) { vis.delete(ni); return true; }
+        vis.delete(ni); return false;
+    }
+    for (let i=0; i<graph.length; i++) if (dfs(i, trie, 1, new Set())) return true;
+    return false;
+}
+
+function _pbValidateRepair(graph, trie) {
+    const allLetters = 'EAIOSTRNDLCUMPGHBYWFKVXZJQ'.split('');
+    for (let iter=0; iter<80; iter++) {
+        const covered = _pbFindCovered(graph, trie);
+        if (covered.size === graph.length) return true;
+        let changed = false;
+        for (let i=0; i<graph.length; i++) {
+            if (covered.has(i)) continue;
+            const node = graph[i];
+            if (node.isQU) continue;
+            const orig = node.letter;
+            let fixed = false;
+            const repairs = [...allLetters].sort(() => Math.random()-0.5);
+            for (const rep of repairs) {
+                if (rep === orig) continue;
+                node.letter = rep;
+                if (_pbCanCoverNode(i, graph, trie)) { fixed = true; changed = true; break; }
+                node.letter = orig;
+            }
+            if (!fixed) node.letter = orig;
+        }
+        if (!changed) return false;
+    }
+    return _pbFindCovered(graph, trie).size === graph.length;
+}
+
+// Verify every tile on the board appears in at least one valid word,
+// using the same adjacency + double-back rules the game uses.
+// Returns true only when the board is fully usable.
+function _pbBoardAllTilesUsed(board) {
+    if (!dictionary.size) return true; // no dict loaded yet, skip check
+    const {rows, cols, cells} = board;
+    const ls = new Set();
+    for (let r=0; r<rows; r++) for (let c=0; c<cols; c++) if (cells[r]?.[c]) ls.add(cells[r][c]);
+    let total = 0;
+    for (let r=0; r<rows; r++) for (let c=0; c<cols; c++) if (cells[r]?.[c]) total++;
+    const used = new Set();
+    function spell(word, idx, r, c, path) {
+        if (idx === word.length) { for (const k of path) used.add(k); return; }
+        for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++) {
+            if (!dr&&!dc) continue;
+            const nr=r+dr, nc=c+dc;
+            if (nr>=0&&nr<rows&&nc>=0&&nc<cols&&cells[nr]?.[nc]===word[idx]) {
+                path.push(nr*cols+nc); spell(word, idx+1, nr, nc, path); path.pop();
+            }
+        }
+    }
+    for (const word of dictionary) {
+        if (used.size >= total) break;
+        let ok = true; for (const ch of word) if (!ls.has(ch)) { ok=false; break; }
+        if (!ok) continue;
+        for (let r=0; r<rows&&used.size<total; r++) for (let c=0; c<cols&&used.size<total; c++) {
+            if (cells[r]?.[c]===word[0]) { spell(word, 1, r, c, [r*cols+c]); }
+        }
+    }
+    return used.size >= total;
+}
+
+// Count distinct valid words reachable via standard (no-revisit) DFS.
+// Conservative vs. the game's double-back rules, so boards that pass the
+// threshold will always have MORE findable words than counted here.
+function _pbCountWords(graph, trie) {
+    const words = new Set(), CAP = 500;
+    function dfs(ni, trNode, word, vis) {
+        if (words.size >= CAP) return;
+        const next = trNode[graph[ni].letter];
+        if (!next) return;
+        vis.add(ni); word.push(graph[ni].letter);
+        if (word.length >= 4 && next.$) words.add(word.join(''));
+        if (word.length < 10 && words.size < CAP)
+            for (const nni of graph[ni].neighbors) if (!vis.has(nni)) dfs(nni, next, word, vis);
+        word.pop(); vis.delete(ni);
+    }
+    for (let i = 0; i < graph.length && words.size < CAP; i++) dfs(i, trie, [], new Set());
+    return words.size;
+}
+
+function _pbMinWords(n) {
+    if (n <= 8)  return 10;
+    if (n <= 11) return 18;
+    if (n <= 14) return 28;
+    if (n <= 17) return 40;
+    return 55;
+}
+
+function _pbToBoard(graph) {
+    let minR=Infinity, maxR=-Infinity, minC=Infinity, maxC=-Infinity;
+    for (const nd of graph) {
+        if (nd.coord.r<minR) minR=nd.coord.r; if (nd.coord.r>maxR) maxR=nd.coord.r;
+        if (nd.coord.c<minC) minC=nd.coord.c; if (nd.coord.c>maxC) maxC=nd.coord.c;
+    }
+    const rows=maxR-minR+1, cols=maxC-minC+1;
+    const lookup = new Map(graph.map(nd => [(nd.coord.r-minR)*cols+(nd.coord.c-minC), nd.letter]));
+    const cells = Array.from({length:rows}, (_,r) => Array.from({length:cols}, (_,c) => { const k=r*cols+c; return lookup.has(k)?lookup.get(k):null; }));
+    return { rows, cols, cells };
+}
+
+function _pbBuildRectGraph(rows, cols) {
+    const nodes = [], idxOf = new Map();
+    for (let r=0;r<rows;r++) for (let c=0;c<cols;c++) {
+        idxOf.set(r*cols+c, nodes.length);
+        nodes.push({ id:r*cols+c, coord:{r,c}, letter:'', isQU:false, neighbors:[] });
+    }
+    for (const node of nodes) {
+        const {r,c} = node.coord;
+        for (let dr=-1;dr<=1;dr++) for (let dc=-1;dc<=1;dc++) {
+            if (!dr&&!dc) continue;
+            const nr=r+dr, nc=c+dc;
+            if (nr>=0&&nr<rows&&nc>=0&&nc<cols) node.neighbors.push(idxOf.get(nr*cols+nc));
+        }
+    }
+    return nodes;
+}
+
+function generateShapedBoard(rows, cols) {
+    const trie = _pbGetTrie();
+    const minW = _pbMinWords(rows * cols);
+    let bestBoard = null, bestCount = 0;
+    for (let attempt = 0; attempt < 20; attempt++) {
+        const graph = _pbBuildRectGraph(rows, cols);
+        _pbSeedAndFill(graph);
+        if (!_pbValidateRepair(graph, trie)) continue;
+        const cells = Array.from({length:rows}, (_,r) =>
+            Array.from({length:cols}, (_,c) => graph[r*cols+c].letter));
+        const board = { rows, cols, cells };
+        if (!_pbBoardAllTilesUsed(board)) continue;
+        const count = _pbCountWords(graph, trie);
+        if (count > bestCount) { bestCount = count; bestBoard = board; }
+        if (count >= minW) break;
+    }
+    return bestBoard;
+}
+
+function generateProceduralBoard(minWords) {
+    const trie = _pbGetTrie();
+    let bestBoard = null, bestCount = 0;
+    for (let attempt = 0; attempt < 20; attempt++) {
+        const graph = _pbGrowShape(_pbGaussian(9, 3));
+        if (!_pbTopologyOk(graph)) continue;
+        _pbSeedAndFill(graph);
+        if (!_pbValidateRepair(graph, trie)) continue;
+        const board = _pbToBoard(graph);
+        if (!_pbBoardAllTilesUsed(board)) continue;
+        const count = _pbCountWords(graph, trie);
+        if (count > bestCount) { bestCount = count; bestBoard = board; }
+        if (count >= (minWords || _pbMinWords(graph.length))) break;
+    }
+    return bestBoard || generateShapedBoard(4, 4);
+}
+
+function generateRoomId() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    return Array.from({length: 6}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+function getPlayerId() {
+    let id = sessionStorage.getItem('gob_pid');
+    if (!id) { id = Date.now().toString(36) + Math.random().toString(36).slice(2); sessionStorage.setItem('gob_pid', id); }
+    return id;
+}
+
+// ── Dictionary ─────────────────────────────────────────────────────────────
+async function loadDictionary() {
+    const cached = localStorage.getItem(DICT_CACHE_KEY);
+    if (cached) {
+        dictionary = new Set(cached.split('\n'));
+        document.getElementById('loader').style.display = 'none';
+        return;
+    }
+    try {
+        const res = await fetch('./2of12inf.txt');
+        if (res.ok) { processDictText(await res.text()); return; }
+    } catch {}
+    document.getElementById('loader').innerHTML =
+        '<p style="font-weight:700;color:var(--error);text-align:center;padding:20px">Could not load dictionary.<br>Please check your connection and refresh.</p>';
+}
+
+function processDictText(text) {
+    const words = text.split(/[\n\r]+/)
+        .map(line => line.trim().replace(/[%!]+$/, ''))
+        .filter(w => w && w.length >= 4 && /^[A-Z]+$/i.test(w))
+        .map(w => w.toUpperCase());
+    dictionary = new Set(words);
+    _pbTrie = null;
+    try { localStorage.setItem(DICT_CACHE_KEY, words.join('\n')); } catch {}
+    document.getElementById('loader').style.display = 'none';
+}
+
+// ── Board config (solo daily board) ───────────────────────────────────────
+async function loadBoardConfig() {
+    preloadedWords = null;
+    const saved = localStorage.getItem('G2_test_board');
+    if (saved) {
+        try {
+            const cfg = JSON.parse(saved);
+            boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
+            return;
+        } catch {}
+    }
+    // fallback to a simple default if nothing stored
+    boardRows = 3; boardCols = 3;
+    boardCells = [['S','T','E'],['A','R','I'],['N','O','D']];
+}
+
+function getBoardHash() { return 'test_' + boardCells.flat().map(c => c||'_').join(''); }
+
+// ── Solo progress ──────────────────────────────────────────────────────────
+function saveProgress() {
+    const h = getBoardHash();
+    localStorage.setItem(`G2_found_${h}`, JSON.stringify([...foundWords]));
+    localStorage.setItem(`G2_timer_${h}`, JSON.stringify({ s: timerSeconds, started: timerStarted, paused: timerPaused }));
+}
+function loadProgress() {
+    const h = getBoardHash();
+    foundWords = new Set(JSON.parse(localStorage.getItem(`G2_found_${h}`) || '[]'));
+    const saved = JSON.parse(localStorage.getItem(`G2_timer_${h}`) || '{}');
+    timerSeconds = saved.s || 0;
+    updateTimerDisplay();
+    if (saved.started) {
+        timerStarted = true;
+        if (saved.paused) {
+            timerPaused = true;
+            // timer stays paused (e.g. already won) — don't restart interval
+        } else {
+            timerPaused = false;
+            timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
+        }
+    }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', async () => {
+    setupPointerListeners();
+    await loadBoardConfig();
+    await loadDictionary();
+    loadProgress();
+    calculateValidWords();
+    renderBoard();
+
+    document.addEventListener('click', e => {
+        const popup = document.getElementById('word-popup');
+        if (popup.style.display !== 'none'
+            && !popup.contains(e.target)
+            && e.target !== document.getElementById('score-btn'))
+            popup.style.display = 'none';
+    });
+});
+
+// ── Responsive cell sizing ─────────────────────────────────────────────────
+function updateCellSize() {
+    if (!boardRows || !boardCols) return;
+    const gc = document.getElementById('game-container');
+    if (!gc || gc.style.display === 'none') return;
+
+    const headerH    = document.querySelector('header')?.offsetHeight || 67;
+    const roomBarEl  = document.getElementById('room-bar');
+    const roomBarH   = roomBarEl?.classList.contains('visible') ? roomBarEl.offsetHeight : 0;
+    const infoBarH   = document.getElementById('info-bar')?.offsetHeight || 42;
+    const previewH   = document.getElementById('word-preview')?.offsetHeight || 46;
+    const timerH     = document.getElementById('timer-display')?.offsetHeight || 28;
+    const rotateBtnH = 34;
+
+    const paddingV = 28;
+    const gapsV    = 30;
+    const safetyV  = 8;
+
+    const availH = Math.max(60, window.innerHeight - headerH - roomBarH - infoBarH - previewH - timerH - rotateBtnH - paddingV - gapsV - safetyV);
+    const availW = Math.min(window.innerWidth - 32, 508);
+
+    const gap = 8;
+    const dim = Math.max(boardRows, boardCols);
+    const baseCellFromH = (availH - (dim - 1) * gap) / dim;
+    const baseCellFromW = (availW - (dim - 1) * gap) / dim;
+    const baseCellSize  = Math.max(36, Math.floor(Math.min(baseCellFromH, baseCellFromW)));
+    const cellSize      = Math.floor(baseCellSize * 0.9);
+    const fontSize      = Math.max(0.8, cellSize / 29);
+
+    document.documentElement.style.setProperty('--cell-size', `${cellSize}px`);
+    document.documentElement.style.setProperty('--cell-font', `${fontSize}rem`);
+
+    // Wrapper is always a fixed square based on max(rows,cols) so it never resizes on rotation
+    const fullGridW = dim * baseCellSize + (dim - 1) * gap;
+    const squareSz  = dim * cellSize + (dim - 1) * gap;
+    const wrapper = document.getElementById('board-wrapper');
+    if (wrapper) {
+        wrapper.style.width  = `${fullGridW}px`;
+        wrapper.style.height = `${squareSz + 34}px`;
+    }
+
+    // Board-container sits absolutely, centered inside the square content area
+    const boardW = boardCols * cellSize + (boardCols - 1) * gap;
+    const boardH = boardRows * cellSize + (boardRows - 1) * gap;
+    const container = document.getElementById('board-container');
+    if (container) {
+        container.style.position = 'absolute';
+        container.style.margin   = '0';
+        container.style.left     = `${(fullGridW - boardW) / 2}px`;
+        container.style.top      = `${34 + (squareSz - boardH) / 2}px`;
+    }
+}
+
+let _resizeTimer;
+window.addEventListener('resize', () => { clearTimeout(_resizeTimer); _resizeTimer = setTimeout(updateCellSize, 80); });
+
+// ── Board rotation ────────────────────────────────────────────────────────
+function rotateBoard() {
+    const wrapper = document.getElementById('board-wrapper');
+    if (wrapper?.dataset.rotating === 'true') return;
+    const grid = document.getElementById('grid');
+    const cellSz = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--cell-size')) || 54;
+
+    // Fixed pivot = center of the max(rows,cols) virtual square, stable across all orientations
+    const gap      = 8;
+    const maxDim   = Math.max(boardRows, boardCols);
+    const squareSz = maxDim * cellSz + (maxDim - 1) * gap;
+    const wrapW    = parseFloat(wrapper.style.width) || wrapper.getBoundingClientRect().width;
+    const cx = wrapW / 2;
+    const cy = 34 + squareSz / 2;
+    const wrapR = wrapper.getBoundingClientRect();
+
+    const layers = [];
+    for (let r = 0; r < boardRows; r++) {
+        for (let c = 0; c < boardCols; c++) {
+            const el = cellElements[r]?.[c];
+            if (!el || boardCells[r]?.[c] === null) continue;
+            const eR  = el.getBoundingClientRect();
+            const ecx = eR.left - wrapR.left + cellSz / 2;
+            const ecy = eR.top  - wrapR.top  + cellSz / 2;
+            const dx = ecx - cx, dy = ecy - cy;
+            const radius = Math.sqrt(dx * dx + dy * dy);
+            const sa = radius < 0.5 ? 0 : Math.atan2(dy, dx);
+            const clone = el.cloneNode(true);
+            clone.style.cssText = `position:absolute;width:${cellSz}px;height:${cellSz}px;left:${ecx - cellSz/2}px;top:${ecy - cellSz/2}px;margin:0;z-index:10;pointer-events:none;transition:none`;
+            wrapper.appendChild(clone);
+            layers.push({ clone, radius, sa });
+        }
+    }
+
+    grid.style.visibility = 'hidden';
+    wrapper.dataset.rotating = 'true';
+
+    const T = 500, t0 = performance.now();
+    function ease(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2; }
+
+    function frame(now) {
+        const raw = Math.min((now - t0) / T, 1);
+        const da  = ease(raw) * Math.PI / 2;
+        for (const {clone, radius, sa} of layers) {
+            const a = sa + da;
+            clone.style.left = (cx + radius * Math.cos(a) - cellSz / 2) + 'px';
+            clone.style.top  = (cy + radius * Math.sin(a) - cellSz / 2) + 'px';
+        }
+        if (raw < 1) { requestAnimationFrame(frame); return; }
+        for (const {clone} of layers) wrapper.removeChild(clone);
+        grid.style.visibility = '';
+        wrapper.dataset.rotating = 'false';
+        const oldRows = boardRows, oldCols = boardCols;
+        const newCells = Array.from({length: oldCols}, (_, nr) =>
+            Array.from({length: oldRows}, (_, nc) => boardCells[oldRows-1-nc]?.[nr] ?? null));
+        boardRows = oldCols; boardCols = oldRows; boardCells = newCells;
+        _rotateCanonicalPaths(oldRows, oldCols);
+        clearPathUI();
+        updateCellSize();
+        renderBoard();
+    }
+    requestAnimationFrame(frame);
+}
+
+// ── Board rendering ────────────────────────────────────────────────────────
+function renderBoard() {
+    const grid = document.getElementById('grid');
+    grid.style.gridTemplateColumns = `repeat(${boardCols}, 1fr)`;
+    grid.innerHTML = '';
+    cellElements = [];
+    for (let r = 0; r < boardRows; r++) {
+        cellElements[r] = [];
+        for (let c = 0; c < boardCols; c++) {
+            const letter = boardCells[r]?.[c] ?? null;
+            const cell   = document.createElement('div');
+            if (letter) {
+                cell.className = 'grid-cell';
+                cell.innerHTML = `<span class="tile-letter">${letter}</span><span class="tile-hint-start"></span><span class="tile-hint-usage"></span>`;
+                cell.dataset.r = r; cell.dataset.c = c;
+                cellElements[r][c] = cell;
+            } else {
+                cell.className = 'grid-cell empty';
+                cellElements[r][c] = null;
+            }
+            grid.appendChild(cell);
+        }
+    }
+    clearPathUI();
+    updateScoreUI();
+    requestAnimationFrame(updateCellSize);
+    updateTileHints();
+}
+
+// ── Hit detection ──────────────────────────────────────────────────────────
+function getCellAtPoint(px, py) {
+    for (let r = 0; r < boardRows; r++)
+        for (let c = 0; c < boardCols; c++) {
+            const el = cellElements[r]?.[c];
+            if (!el) continue;
+            const rect = el.getBoundingClientRect();
+            const cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
+            if ((px-cx)**2 + (py-cy)**2 <= (rect.width/2)**2) return {r,c};
+        }
+    return null;
+}
+
+// ── Pointer listeners ──────────────────────────────────────────────────────
+function setupPointerListeners() {
+    const bc = document.getElementById('board-container');
+    bc.addEventListener('mousedown',  e => { const h=getCellAtPoint(e.clientX,e.clientY); if(h) startSelection(h.r,h.c); });
+    window.addEventListener('mousemove', e => { if(!isSelecting) return; const h=getCellAtPoint(e.clientX,e.clientY); if(h) handleHover(h.r,h.c); });
+    window.addEventListener('mouseup', endSelection);
+    bc.addEventListener('touchstart', e => { e.preventDefault(); const t=e.touches[0]; const h=getCellAtPoint(t.clientX,t.clientY); if(h) startSelection(h.r,h.c); }, {passive:false});
+    bc.addEventListener('touchmove',  e => { e.preventDefault(); if(!isSelecting) return; const t=e.touches[0]; const h=getCellAtPoint(t.clientX,t.clientY); if(h) handleHover(h.r,h.c); }, {passive:false});
+    bc.addEventListener('touchend', endSelection);
+}
+
+function startSelection(r, c) {
+    isSelecting = true;
+    currentPath = [{r,c}];
+    if (!roomMode) startTimer();
+    const p = document.getElementById('word-preview');
+    clearTimeout(p._fadeTimer);
+    p.classList.remove('found','already','error','small','settling');
+    p.style.transition = ''; p.style.opacity = '';
+    updatePathUI();
+}
+
+function handleHover(r, c) {
+    const last = currentPath[currentPath.length-1];
+    if (last.r===r && last.c===c) return;
+    if (Math.abs(last.r-r)<=1 && Math.abs(last.c-c)<=1) { currentPath.push({r,c}); updatePathUI(); }
+}
+
+function endSelection() {
+    if (!isSelecting) return;
+    isSelecting = false;
+    const word = currentPath.map(({r,c}) => boardCells[r][c]).join('');
+    currentPath = [];
+
+    for (let r=0;r<boardRows;r++) for (let c=0;c<boardCols;c++) cellElements[r]?.[c]?.classList.remove('active');
+    const svg = document.getElementById('svg-overlay');
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    const preview = document.getElementById('word-preview');
+    clearTimeout(preview._fadeTimer);
+    preview.classList.remove('found','already','error','small','settling');
+    preview.style.transition = ''; preview.style.opacity = '1';
+
+    if (word.length >= 4) {
+        if (!roomMode) localStorage.setItem('G2_share_time', timerSeconds);
+        const myWords = roomMode ? roomFoundWords : foundWords;
+        if (validWords.has(word)) {
+            if (!myWords.has(word)) {
+                myWords.add(word);
+                roomMode ? updateRoomScoreUI() : (saveProgress(), updateScoreUI());
+                updateTileHints();
+                preview.classList.add('found','settling');
+                requestAnimationFrame(() => { preview.style.opacity = '0.5'; });
+            } else {
+                preview.textContent = 'Already found';
+                preview.classList.add('already','small');
+                preview._fadeTimer = setTimeout(() => {
+                    preview.textContent = word;
+                    preview.classList.remove('small');
+                    preview.classList.add('settling');
+                    requestAnimationFrame(() => { preview.style.opacity = '0.5'; });
+                }, 1000);
+            }
+        } else {
+            preview.textContent = 'Invalid word';
+            preview.classList.add('error','small');
+            preview._fadeTimer = setTimeout(() => {
+                preview.textContent = word;
+                preview.classList.remove('small');
+                preview.classList.add('settling');
+                requestAnimationFrame(() => { preview.style.opacity = '0.5'; });
+            }, 1000);
+        }
+    } else {
+        preview.textContent = '';
+    }
+}
+
+// ── Path UI ────────────────────────────────────────────────────────────────
+function updatePathUI() {
+    document.getElementById('word-preview').textContent = currentPath.map(({r,c}) => boardCells[r][c]).join('');
+    for (let r=0;r<boardRows;r++)
+        for (let c=0;c<boardCols;c++)
+            cellElements[r]?.[c]?.classList.toggle('active', currentPath.some(p=>p.r===r&&p.c===c));
+
+    const svg = document.getElementById('svg-overlay');
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    if (currentPath.length < 2) return;
+
+    const cRect = document.getElementById('board-container').getBoundingClientRect();
+    const pts = currentPath.map(({r,c}) => {
+        const rect = cellElements[r][c].getBoundingClientRect();
+        return { x: rect.left+rect.width/2-cRect.left, y: rect.top+rect.height/2-cRect.top };
+    });
+
+    const NS = 'http://www.w3.org/2000/svg';
+    let cellRadius = 27;
+    outer: for (let r=0;r<boardRows;r++) for(let c=0;c<boardCols;c++) if(cellElements[r]?.[c]){cellRadius=cellElements[r][c].getBoundingClientRect().width/2;break outer;}
+
+    const lastP=pts[pts.length-1], prevP=pts[pts.length-2];
+    const dx=lastP.x-prevP.x, dy=lastP.y-prevP.y, dist=Math.sqrt(dx*dx+dy*dy)||1;
+    const ux=dx/dist, uy=dy/dist;
+
+    const defs=document.createElementNS(NS,'defs');
+    const grad=document.createElementNS(NS,'linearGradient');
+    grad.setAttribute('id','seg-grad'); grad.setAttribute('gradientUnits','userSpaceOnUse');
+    grad.setAttribute('x1',prevP.x+ux*cellRadius); grad.setAttribute('y1',prevP.y+uy*cellRadius);
+    grad.setAttribute('x2',lastP.x-ux*cellRadius); grad.setAttribute('y2',lastP.y-uy*cellRadius);
+    const s1=document.createElementNS(NS,'stop'); s1.setAttribute('offset','0%');   s1.setAttribute('stop-color','#fed7aa');
+    const s2=document.createElementNS(NS,'stop'); s2.setAttribute('offset','100%'); s2.setAttribute('stop-color','#9a3412');
+    grad.appendChild(s1); grad.appendChild(s2); defs.appendChild(grad); svg.appendChild(defs);
+
+    pts.forEach((p,i) => {
+        if (i===0) return;
+        const isLast = i===pts.length-1;
+        const line=document.createElementNS(NS,'line');
+        line.setAttribute('x1',pts[i-1].x); line.setAttribute('y1',pts[i-1].y);
+        line.setAttribute('x2',p.x);         line.setAttribute('y2',p.y);
+        line.setAttribute('stroke', isLast?'url(#seg-grad)':'#fed7aa');
+        line.setAttribute('stroke-width','7'); line.setAttribute('stroke-linecap','round');
+        line.setAttribute('opacity', isLast?'1':'0.5');
+        svg.appendChild(line);
+    });
+}
+
+function clearPathUI() {
+    currentPath = [];
+    const preview = document.getElementById('word-preview');
+    clearTimeout(preview._fadeTimer);
+    preview.classList.remove('found','already','error','small','settling');
+    preview.style.transition=''; preview.style.opacity=''; preview.textContent='';
+    for (let r=0;r<boardRows;r++) for(let c=0;c<boardCols;c++) cellElements[r]?.[c]?.classList.remove('active');
+    const svg=document.getElementById('svg-overlay');
+    while(svg.firstChild) svg.removeChild(svg.firstChild);
+}
+
+// ── Solo timer ─────────────────────────────────────────────────────────────
+function startTimer() {
+    if (timerStarted) return;
+    timerStarted = true;
+    timerPaused = false;
+    timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
+}
+function pauseTimer() {
+    if (!timerStarted || timerPaused) return;
+    timerPaused = true;
+    clearInterval(timerInterval);
+    timerInterval = null;
+    saveProgress();
+}
+function resumeTimer() {
+    if (!timerStarted || !timerPaused) return;
+    if (!roomMode && validWords.size > 0 && foundWords.size >= validWords.size) return;
+    timerPaused = false;
+    timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
+}
+function resetTimer() { clearInterval(timerInterval); timerInterval=null; timerStarted=false; timerPaused=false; timerSeconds=0; updateTimerDisplay(); }
+document.addEventListener('visibilitychange', () => {
+    if (roomMode) return;
+    if (document.hidden) pauseTimer(); else resumeTimer();
+});
+function updateTimerDisplay() {
+    if (roomMode) return;
+    const m=String(Math.floor(timerSeconds/60)).padStart(2,'0'), s=String(timerSeconds%60).padStart(2,'0');
+    document.getElementById('timer-display').textContent=`${m}:${s}`;
+}
+
+// ── Tile hints ─────────────────────────────────────────────────────────────
+// Returns the first DFS path found for `word` on the board (double-back allowed).
+// Result: { startKey, keys: number[] } or null.
+function _findFirstPath(word) {
+    function dfs(r, c, idx, path) {
+        if (idx === word.length) return [...path];
+        for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++) {
+            if (!dr&&!dc) continue;
+            const nr=r+dr, nc=c+dc;
+            if (nr>=0&&nr<boardRows&&nc>=0&&nc<boardCols&&boardCells[nr]?.[nc]===word[idx]) {
+                path.push(nr*boardCols+nc);
+                const res=dfs(nr, nc, idx+1, path);
+                if (res) return res;
+                path.pop();
+            }
+        }
+        return null;
+    }
+    for (let r=0; r<boardRows; r++) for (let c=0; c<boardCols; c++) {
+        if (boardCells[r]?.[c]===word[0]) {
+            const k0=r*boardCols+c;
+            const keys=dfs(r, c, 1, [k0]);
+            if (keys) return { startKey: k0, keys };
+        }
+    }
+    return null;
+}
+
+function _buildCanonicalPaths() {
+    wordCanonicalPaths.clear();
+    for (const word of validWords) {
+        const cp=_findFirstPath(word);
+        if (cp) wordCanonicalPaths.set(word, cp);
+    }
+}
+
+// Transforms canonical path keys after a 90° CW rotation.
+// Old (r,c) in oldRows×oldCols grid → new (c, oldRows-1-r) in oldCols×oldRows grid.
+function _rotateCanonicalPaths(oldRows, oldCols) {
+    const xform = k => {
+        const r = Math.floor(k / oldCols), c = k % oldCols;
+        return c * oldRows + (oldRows - 1 - r);
+    };
+    const next = new Map();
+    for (const [word, cp] of wordCanonicalPaths) {
+        next.set(word, { startKey: xform(cp.startKey), keys: cp.keys.map(xform) });
+    }
+    wordCanonicalPaths = next;
+}
+
+function updateTileHints() {
+    if (!validWords.size) return;
+    const myWords = roomMode ? roomFoundWords : foundWords;
+    const remaining = [...validWords].filter(w => !myWords.has(w));
+    const pct = myWords.size / validWords.size;
+    const showStart = pct > 0.15;
+    const showUsage = pct > 0.35;
+
+    const winMsg = document.getElementById('win-msg');
+    if (winMsg) winMsg.style.display = (!roomMode && remaining.length === 0) ? 'flex' : 'none';
+    if (!roomMode && remaining.length === 0 && timerStarted && !timerPaused) {
+        pauseTimer();
+        setTimeout(() => shareGame(), 800);
+    }
+
+    const orangeCount = new Map();
+    const greyCount   = new Map();
+
+    for (const word of remaining) {
+        const cp = wordCanonicalPaths.get(word);
+        if (!cp) continue;
+        orangeCount.set(cp.startKey, (orangeCount.get(cp.startKey)||0)+1);
+        for (const k of cp.keys) greyCount.set(k, (greyCount.get(k)||0)+1);
+    }
+
+    for (let r=0; r<boardRows; r++) {
+        for (let c=0; c<boardCols; c++) {
+            const letter = boardCells[r]?.[c];
+            if (!letter) continue;
+            const el = cellElements[r]?.[c];
+            if (!el) continue;
+            const k = r*boardCols+c;
+            const oc = orangeCount.get(k)||0;
+            const gc = greyCount.get(k)||0;
+            el.classList.toggle('exhausted', gc===0);
+            const hs = el.querySelector('.tile-hint-start');
+            const hu = el.querySelector('.tile-hint-usage');
+            if (hs) hs.textContent = (showStart && oc>0) ? oc : '';
+            if (hu) hu.textContent = (showUsage && gc>0) ? gc : '';
+        }
+    }
+}
+
+// ── Score UI ───────────────────────────────────────────────────────────────
+function updateScoreUI() {
+    if (roomMode) return;
+    document.getElementById('score-btn').textContent = `Found: ${foundWords.size} / ${validWords.size}`;
+    document.getElementById('room-score-display').textContent = `Score: ${totalScore(foundWords)}`;
+}
+function updateRoomScoreUI() {
+    document.getElementById('score-btn').textContent = `Found: ${roomFoundWords.size} / ${validWords.size}`;
+    document.getElementById('room-score-display').textContent = `Score: ${totalScore(roomFoundWords)}`;
+}
+
+// ── Word popup ─────────────────────────────────────────────────────────────
+function togglePopup(e) {
+    e.stopPropagation();
+    const popup = document.getElementById('word-popup');
+    if (popup.style.display !== 'none') { popup.style.display='none'; return; }
+
+    const myWords = roomMode ? roomFoundWords : foundWords;
+    const groups  = {};
+    for (const w of validWords) {
+        if (!groups[w.length]) groups[w.length]={total:0,found:0};
+        groups[w.length].total++;
+        if (myWords.has(w)) groups[w.length].found++;
+    }
+    popup.innerHTML='';
+    const keys = Object.keys(groups).sort((a,b)=>a-b);
+    if (!keys.length) {
+        popup.innerHTML='<div style="color:var(--text-muted);font-size:.9rem;padding:4px 0">No words yet.</div>';
+    } else {
+        keys.forEach(len => {
+            const {total,found:fc} = groups[len];
+            const sec=document.createElement('div'); sec.className='popup-section';
+            const row=document.createElement('div'); row.className='popup-row';
+            row.innerHTML=`<span class="popup-label">${len}-letter words</span><span class="popup-count">${fc} / ${total}</span>`;
+            sec.appendChild(row);
+            const wf=[...validWords].filter(w=>w.length===parseInt(len)&&myWords.has(w)).sort();
+            if (wf.length) {
+                const wl=document.createElement('div'); wl.className='popup-words';
+                wf.forEach(w=>{const chip=document.createElement('span');chip.className='popup-chip';chip.textContent=w;wl.appendChild(chip);});
+                sec.appendChild(wl);
+            }
+            popup.appendChild(sec);
+        });
+    }
+    if (!roomMode) {
+        const rb=document.createElement('button'); rb.className='popup-reset'; rb.textContent='Reset Progress';
+        rb.onclick=()=>{resetProgress();popup.style.display='none';};
+        popup.appendChild(rb);
+    }
+    popup.style.display='block';
+}
+
+// ── Word validity ──────────────────────────────────────────────────────────
+function canSpellOnBoard(word) {
+    function dfs(idx,r,c) {
+        if(r<0||r>=boardRows||c<0||c>=boardCols) return false;
+        if(!boardCells[r]?.[c]||boardCells[r][c]!==word[idx]) return false;
+        if(idx===word.length-1) return true;
+        for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++) if((dr||dc)&&dfs(idx+1,r+dr,c+dc)) return true;
+        return false;
+    }
+    for(let r=0;r<boardRows;r++) for(let c=0;c<boardCols;c++) if(boardCells[r]?.[c]===word[0]&&dfs(0,r,c)) return true;
+    return false;
+}
+function calculateValidWords() {
+    validWords.clear();
+    if (preloadedWords) {
+        for (const word of preloadedWords) validWords.add(word);
+        _buildCanonicalPaths();
+        updateScoreUI();
+        return;
+    }
+    const ls=new Set();
+    for(let r=0;r<boardRows;r++) for(let c=0;c<boardCols;c++) if(boardCells[r]?.[c]) ls.add(boardCells[r][c]);
+    for(const word of dictionary) {
+        if(gameWordSelections.has(word)) continue;
+        let ok=true;
+        for(const ch of word) if(!ls.has(ch)){ok=false;break;}
+        if(ok&&canSpellOnBoard(word)) validWords.add(word);
+    }
+    _buildCanonicalPaths();
+    updateScoreUI();
+}
+
+// ── Solo reset ─────────────────────────────────────────────────────────────
+function resetProgress() {
+    foundWords.clear();
+    resetTimer();
+    localStorage.removeItem('G2_share_time');
+    saveProgress();
+    updateScoreUI();
+    clearPathUI();
+    const popup = document.getElementById('word-popup');
+    if (popup) popup.style.display = 'none';
+    updateTileHints();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ROOM SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Room menu ──────────────────────────────────────────────────────────────
+function toggleRoomMenu(e) {
+    e.stopPropagation();
+    const menu = document.getElementById('room-menu');
+    const open = menu.style.display === 'none';
+    menu.style.display = open ? '' : 'none';
+    if (open) {
+        document.getElementById('join-code-row').style.display = 'none';
+        document.getElementById('join-code-input').value = '';
+    }
+}
+
+function startRoomFromMenu() {
+    document.getElementById('room-menu').style.display = 'none';
+    createRoom();
+}
+
+function showJoinInput() {
+    document.getElementById('join-code-row').style.display = '';
+    document.getElementById('join-code-input').focus();
+}
+
+async function joinRoomByCode() {
+    const code = document.getElementById('join-code-input').value.trim().toUpperCase();
+    if (!code) return;
+    if (!db) {
+        alert('Rooms need Firebase.\n\nCreate a free project at firebase.google.com, enable Realtime Database, then paste the config into index.html where it says REPLACE_ME.');
+        return;
+    }
+    document.getElementById('room-menu').style.display = 'none';
+    history.pushState({}, '', `?room=${code}`);
+    await initRoomMode(code);
+}
+
+async function createRoom() {
+    if (!db) {
+        alert('Rooms need Firebase.\n\nCreate a free project at firebase.google.com, enable Realtime Database, then paste the config into index.html where it says REPLACE_ME.');
+        return;
+    }
+    playerId  = getPlayerId();
+    roomId    = generateRoomId();
+    roomRef   = db.ref(`rooms/${roomId}`);
+    await roomRef.set({ created: Date.now(), state: 'lobby', settings: { rows: 4, cols: 4, minutes: 3 }, currentRound: -1 });
+    history.pushState({}, '', `?room=${roomId}`);
+    await initRoomMode(roomId);
+}
+
+async function initRoomMode(rid) {
+    saveProgress(); // snapshot solo state before room board overwrites boardCells
+    pauseTimer();   // stop auto-save interval so it can't write under the wrong hash
+    await loadGameWordSelections(); // needed by host for filtered board generation
+
+    roomMode  = true;
+    roomId    = rid;
+    playerId  = getPlayerId();
+    roomRef   = db.ref(`rooms/${rid}`);
+
+    const snap = await roomRef.once('value');
+    if (!snap.exists()) {
+        alert('Room not found.');
+        history.replaceState({}, '', location.pathname);
+        location.reload();
+        return;
+    }
+
+    document.getElementById('game-container').style.display = 'none';
+    document.getElementById('start-room-btn').style.display = 'none';
+    document.getElementById('room-overlay').classList.add('visible');
+
+    const savedName = localStorage.getItem('gob_name') || '';
+    if (savedName && savedName !== 'undefined') document.getElementById('player-name-input').value = savedName;
+
+    // Returning player: restore online status before listener fires
+    const roomData = snap.val();
+    const existingPlayer = roomData?.players?.[playerId];
+    const hasValidName = existingPlayer?.name && existingPlayer.name !== 'undefined';
+    if (existingPlayer && existingPlayer.online === false && hasValidName) {
+        // Restore Firebase name to input and localStorage in case localStorage drifted
+        document.getElementById('player-name-input').value = existingPlayer.name;
+        localStorage.setItem('gob_name', existingPlayer.name);
+        await roomRef.child(`players/${playerId}`).update({ online: true, ready: false });
+        roomRef.child(`players/${playerId}/online`).onDisconnect().set(false);
+    }
+
+    roomRef.on('value', snap => handleRoomUpdate(snap.val()));
+
+    document.addEventListener('click', e => {
+        const popup=document.getElementById('word-popup');
+        if(popup.style.display!=='none'&&!popup.contains(e.target)&&e.target!==document.getElementById('score-btn'))
+            popup.style.display='none';
+    });
+}
+
+function handleRoomUpdate(data) {
+    if (!data) { alert('This room has been closed.'); leaveRoom(); return; }
+    if (data.state === 'lobby') {
+        roomPlayingInitialized = false;
+        scoreBoardShown = false;
+        showPanel('lobby');
+        renderLobby(data);
+        checkAutoStart(data);
+    } else if (data.state === 'playing') {
+        if (data.currentRound !== roomCurrentRound) {
+            roomPlayingInitialized = false;
+            scoreBoardShown = false;
+        }
+        // Late joiner: not in player list yet — show lobby for name entry
+        if (!data.players?.[playerId]) {
+            showPanel('lobby');
+            renderLobby(data);
+            return;
+        }
+        if (!roomPlayingInitialized && data.currentRound > roomLastPlayedRound) renderRoomPlaying(data);
+    } else if (data.state === 'finished') {
+        const myPlayer = data.players?.[playerId];
+        const didPlayRound = myPlayer?.rounds?.[data.currentRound ?? 0] != null;
+        if (!didPlayRound || myPlayer?.closedScoreboard) {
+            showPanel('lobby');
+            renderLobby(data);
+            checkAutoStart(data);
+        } else {
+            renderScoreboard(data);
+        }
+    }
+}
+
+function checkAutoStart(data) {
+    const players = data.players || {};
+    const arr = Object.entries(players)
+        .filter(([,p]) => p.online !== false)
+        .sort((a,b) => (a[1].joined||0)-(b[1].joined||0));
+    if (arr.length > 0 && arr.every(([,p]) => p.ready) && arr[0][0] === playerId) {
+        autoStartGame(data);
+    }
+}
+
+// ── Lobby ──────────────────────────────────────────────────────────────────
+function renderLobby(data) {
+    document.getElementById('lobby-code').textContent = roomId;
+
+    const players = data.players || {};
+    const myPlayer = players[playerId];
+    const hasJoined = !!myPlayer && myPlayer.online !== false;
+    const myReady   = myPlayer?.ready || false;
+
+    document.getElementById('name-entry-card').style.display = '';
+    const joinBtn = document.getElementById('join-lobby-btn');
+    if (joinBtn) joinBtn.textContent = hasJoined ? 'Update' : 'Join';
+
+    const readyBtn = document.getElementById('ready-btn');
+    readyBtn.disabled = !hasJoined;
+    readyBtn.textContent = myReady ? 'Ready ✓' : "I'm Ready";
+    readyBtn.className = 'btn btn-full' + (myReady ? ' btn-green' : '');
+
+    // Only show online players
+    const onlinePlayers = Object.entries(players).filter(([,p]) => p.online !== false);
+    // Host = earliest joined among online
+    const hostId = onlinePlayers.slice().sort((a,b) => (a[1].joined||0)-(b[1].joined||0))[0]?.[0];
+    // Display order: most game points first, then join order
+    const displayArr = onlinePlayers.slice().sort((a,b) =>
+        (b[1].gamePoints||0)-(a[1].gamePoints||0) || (a[1].joined||0)-(b[1].joined||0));
+
+    const pl = document.getElementById('player-list');
+    pl.innerHTML = '';
+    if (!displayArr.length) {
+        pl.innerHTML = '<div class="hint">No players yet…</div>';
+    } else {
+        displayArr.forEach(([pid,p]) => {
+            const el=document.createElement('div');
+            el.className='player-item'+(pid===playerId?' me':'');
+            const hostTag = pid===hostId ? ' <span style="font-size:.75rem;color:var(--text-muted);font-weight:400">(host)</span>' : '';
+            const pts = p.gamePoints || 0;
+            const scoreTag = `<span style="font-size:.78rem;color:var(--text-muted);margin-left:4px">${pts} pt${pts!==1?'s':''}</span>`;
+            const badge = `<span class="ready-badge ${p.ready?'yes':'no'}">${p.ready?'Ready':'Waiting'}</span>`;
+            el.innerHTML=`<span class="player-dot"></span>${p.name||'?'}${hostTag}${scoreTag}${badge}`;
+            pl.appendChild(el);
+        });
+    }
+
+    const s = data.settings || {rows:4,cols:4,minutes:3};
+    const rows = s.rows || s.size || 4;
+    const cols = s.cols || s.size || 4;
+    const isRandom = s.mode === 'random';
+    const isCustom = !isRandom && (s.custom === true || !([3,4,5].includes(rows) && rows === cols));
+    document.querySelectorAll('.size-tab').forEach(btn => {
+        const br=parseInt(btn.dataset.r), bc=parseInt(btn.dataset.c);
+        if (br===-1) { btn.classList.toggle('active', isRandom); return; }
+        btn.classList.toggle('active', br===0 ? isCustom : !isRandom && br===rows && bc===cols);
+    });
+    document.getElementById('custom-size-row').style.display = isCustom ? '' : 'none';
+    if (isCustom) { document.getElementById('custom-rows').value=rows; document.getElementById('custom-cols').value=cols; }
+    initMinutesPicker(s.minutes || 3);
+}
+
+async function joinLobby() {
+    const inp  = document.getElementById('player-name-input');
+    const name = inp.value.trim();
+    if (!name || name === 'undefined') { inp.value = ''; inp.focus(); return; }
+    localStorage.setItem('gob_name', name);
+    const snap = await roomRef.child(`players/${playerId}`).once('value');
+    const existing = snap.val();
+    if (existing) {
+        await roomRef.child(`players/${playerId}`).update({ name, online: true, ready: false });
+    } else {
+        await roomRef.child(`players/${playerId}`).set({ name, gamePoints: 0, joined: Date.now(), online: true, ready: false });
+    }
+    roomRef.child(`players/${playerId}/online`).onDisconnect().set(false);
+    const joinBtn = document.getElementById('join-lobby-btn');
+    if (joinBtn) joinBtn.textContent = 'Update';
+}
+
+async function toggleReady() {
+    const snap = await roomRef.child(`players/${playerId}`).once('value');
+    const p = snap.val();
+    if (!p) return;
+    await roomRef.child(`players/${playerId}/ready`).set(!p.ready);
+}
+
+async function setRoomSetting(field, val) {
+    await roomRef.child(`settings/${field}`).set(val);
+}
+
+async function setRoomSize(rows, cols) {
+    await roomRef.child('settings').update({ rows, cols, custom: false, mode: 'shaped' });
+}
+
+function setRoomSizeCustom() {
+    document.getElementById('custom-size-row').style.display = '';
+    document.querySelectorAll('.size-tab').forEach(btn=>btn.classList.toggle('active', btn.dataset.r==='0'));
+    applyCustomSize();
+}
+
+function applyCustomSize() {
+    const r = parseInt(document.getElementById('custom-rows').value) || 5;
+    const c = parseInt(document.getElementById('custom-cols').value) || 5;
+    roomRef.child('settings').update({ rows: r, cols: c, custom: true, mode: 'shaped' });
+}
+
+function setRoomSizeRandom() {
+    document.getElementById('custom-size-row').style.display = 'none';
+    roomRef.child('settings').update({ rows: 5, cols: 5, custom: false, mode: 'random' });
+}
+
+function initMinutesPicker(initialValue) {
+    const scroller = document.getElementById('minutes-picker');
+    if (!scroller._built) {
+        scroller._built = true;
+        const pad1=document.createElement('div'); pad1.className='picker-pad'; scroller.appendChild(pad1);
+        for (let i=1;i<=99;i++) {
+            const item=document.createElement('div'); item.className='picker-item';
+            item.textContent=`${i} min`; item.dataset.value=i; scroller.appendChild(item);
+        }
+        const pad2=document.createElement('div'); pad2.className='picker-pad'; scroller.appendChild(pad2);
+        let t;
+        scroller.addEventListener('scroll', () => {
+            clearTimeout(t);
+            t = setTimeout(() => {
+                const val=Math.min(99,Math.max(1,Math.round(scroller.scrollTop/40)+1));
+                setRoomSetting('minutes', val);
+            }, 150);
+        }, {passive:true});
+        scroller.addEventListener('wheel', e => {
+            e.preventDefault();
+            scroller.scrollBy({ top: e.deltaY > 0 ? 40 : -40, behavior: 'smooth' });
+        }, {passive:false});
+    }
+    requestAnimationFrame(() => { scroller.scrollTop = (initialValue-1)*40; });
+}
+
+// ── Room word support ───────────────────────────────────────────────────────
+async function loadGameWordSelections() {
+    if (!db) return;
+    try {
+        const snap = await db.ref('wordSelections').once('value');
+        gameWordSelections = new Set(Object.keys(snap.val() || {}));
+        _pbTrie = null; // rebuild trie with updated exclusion list
+    } catch {}
+}
+
+function computeRoomWords(board) {
+    if (!dictionary.size) return [];
+    const savedR = boardRows, savedC = boardCols, savedCells = boardCells;
+    boardRows = board.rows; boardCols = board.cols; boardCells = board.cells;
+    const ls = new Set();
+    for (let r = 0; r < boardRows; r++)
+        for (let c = 0; c < boardCols; c++)
+            if (boardCells[r]?.[c]) ls.add(boardCells[r][c]);
+    const words = [];
+    for (const word of dictionary) {
+        if (gameWordSelections.has(word)) continue;
+        let ok = true;
+        for (const ch of word) if (!ls.has(ch)) { ok = false; break; }
+        if (ok && canSpellOnBoard(word)) words.push(word);
+    }
+    boardRows = savedR; boardCols = savedC; boardCells = savedCells;
+    return words;
+}
+
+// ── Game start ─────────────────────────────────────────────────────────────
+async function autoStartGame(data) {
+    // Host only — ensure dictionary and word selections are loaded before generation
+    if (!dictionary.size) await loadDictionary();
+    await loadGameWordSelections();
+
+    roomRef.child('state').transaction(
+        cur => (cur === 'lobby' || cur === 'finished') ? 'playing' : undefined,
+        async (err, committed) => {
+            if (!committed) return;
+            const snap = await roomRef.once('value');
+            const d = snap.val();
+            const s = d.settings || {rows:4,cols:4,minutes:3};
+            const rows = s.rows || s.size || 4;
+            const cols = s.cols || s.size || 4;
+            const nextRound = (d.currentRound ?? -1) + 1;
+            const board = s.mode === 'random' ? generateProceduralBoard(20) : generateShapedBoard(rows, cols);
+            const words = computeRoomWords(board);
+            if (words.length) board.words = words;
+            const updates = { board, startedAt: Date.now(), currentRound: nextRound };
+            for (const pid of Object.keys(d.players || {})) {
+                updates[`players/${pid}/closedScoreboard`] = false;
+                updates[`players/${pid}/ready`] = false;
+            }
+            await roomRef.update(updates);
+        }
+    );
+}
+
+function renderRoomPlaying(data) {
+    if (roomPlayingInitialized) return;
+    if (!data.board) return;
+    // Ignore stale intermediate Firebase events where the round has already expired
+    const durationMs = (data.settings?.minutes || 3) * 60000;
+    if (data.startedAt && (data.startedAt + durationMs) < Date.now()) return;
+    roomPlayingInitialized = true;
+
+    showPanel('game');
+
+    boardRows = data.board.rows; boardCols = data.board.cols; boardCells = data.board.cells;
+    roomFoundWords   = new Set();
+    roomScoreSubmitted = false;
+    roomCurrentRound   = data.currentRound ?? 0;
+
+    document.getElementById('score-btn').textContent = 'Calculating…';
+    document.getElementById('room-score-display').textContent = 'Score: 0';
+    document.getElementById('timer-display').textContent = '--:--';
+    document.getElementById('timer-display').classList.remove('urgent');
+    document.getElementById('room-code-label').textContent = `Room: ${roomId}`;
+
+    renderBoard();
+    clearPathUI();
+
+    setTimeout(() => {
+        calculateValidWords();
+        updateTileHints();
+        updateRoomScoreUI();
+        startRoomCountdown(data.startedAt + (data.settings?.minutes || 3) * 60000);
+    }, 50);
+}
+
+function startRoomCountdown(endAt) {
+    const el = document.getElementById('timer-display');
+    function tick() {
+        const rem = Math.max(0, endAt - Date.now());
+        const s   = Math.ceil(rem / 1000);
+        el.textContent = `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+        el.classList.toggle('urgent', rem > 0 && rem <= 30000);
+        if (rem <= 0) { clearInterval(roomCountdownInterval); roomCountdownInterval = null; endRoomGame(); }
+    }
+    tick();
+    roomCountdownInterval = setInterval(tick, 500);
+}
+
+async function endRoomGame() {
+    if (roomScoreSubmitted) return;
+    roomScoreSubmitted = true;
+
+    await roomRef.child(`players/${playerId}/rounds/${roomCurrentRound}`)
+        .set({ score: totalScore(roomFoundWords), words: [...roomFoundWords] });
+    await roomRef.child(`players/${playerId}`).update({ ready: false, closedScoreboard: false });
+
+    roomRef.child('state').transaction(cur => cur==='playing' ? 'finished' : undefined,
+        (err, committed) => { if (committed) waitForAllScores(roomCurrentRound).then(awardGamePoints); });
+}
+
+function waitForAllScores(round) {
+    return new Promise(resolve => {
+        const ref = roomRef.child('players');
+        const bail = setTimeout(() => { ref.off('value', check); resolve(); }, 5000);
+        function check(snap) {
+            const players = snap.val() || {};
+            const online = Object.values(players).filter(p => p.online !== false);
+            if (online.length > 0 && online.every(p => p.rounds?.[round]?.score != null)) {
+                clearTimeout(bail);
+                ref.off('value', check);
+                resolve();
+            }
+        }
+        ref.on('value', check);
+    });
+}
+
+async function awardGamePoints() {
+    const round = roomCurrentRound;
+    roomRef.child(`pointsRound${round}`).transaction(v => v!==null ? undefined : 'processing',
+        async (err, committed) => {
+            if (!committed) return;
+            const snap = await roomRef.once('value');
+            const data = snap.val();
+            if (!data) return;
+            const players = data.players || {};
+            let maxScore=-1, winnerId=null;
+            for (const [pid,p] of Object.entries(players)) {
+                const sc = p.rounds?.[round]?.score ?? -1;
+                if (sc > maxScore) { maxScore=sc; winnerId=pid; }
+            }
+            if (winnerId && maxScore >= 0)
+                await roomRef.child(`players/${winnerId}/gamePoints`).transaction(p=>(p||0)+1);
+            await roomRef.child(`pointsRound${round}`).set(`done:${winnerId||'none'}`);
+        }
+    );
+}
+
+// ── Scoreboard ─────────────────────────────────────────────────────────────
+function renderScoreboard(data) {
+    // Submit this player's score if the game ended before their countdown fired
+    if (!roomScoreSubmitted && roomPlayingInitialized) {
+        roomScoreSubmitted = true;
+        roomRef.child(`players/${playerId}/rounds/${roomCurrentRound}`)
+            .set({ score: totalScore(roomFoundWords), words: [...roomFoundWords] });
+        roomRef.child(`players/${playerId}`).update({ ready: false, closedScoreboard: false });
+    }
+    if (roomCountdownInterval) { clearInterval(roomCountdownInterval); roomCountdownInterval=null; }
+
+    if (!scoreBoardShown) { scoreBoardShown=true; showPanel('scoreboard'); }
+
+    const players = data.players || {};
+    const round   = data.currentRound ?? 0;
+    const pointsDone = (data[`pointsRound${round}`] || '').toString().startsWith('done:');
+    const entries = Object.entries(players).map(([pid,p]) => ({
+        pid,
+        name:       p.name || '?',
+        gamePoints: p.gamePoints || 0,
+        roundScore: p.rounds?.[round]?.score ?? null,
+        roundWords: p.rounds?.[round]?.words || []
+    })).sort((a,b) => b.gamePoints-a.gamePoints || (b.roundScore||0)-(a.roundScore||0));
+
+    document.getElementById('player-modal-overlay')?.remove();
+
+    const sb = document.getElementById('scoreboard-body');
+    sb.innerHTML = '';
+
+    if (!pointsDone) {
+        const loader = document.createElement('div');
+        loader.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;font-size:0.82rem;color:var(--text-muted);font-weight:600;padding:4px 0 6px';
+        loader.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div>Calculating winner…';
+        sb.appendChild(loader);
+    }
+
+    entries.forEach((e,i) => {
+        const row=document.createElement('div');
+        row.className='score-row'+(i===0&&pointsDone?' gold':'');
+        row.innerHTML=`<span class="score-name">${e.name}</span>
+            <span class="score-gp">${e.gamePoints} pt${e.gamePoints!==1?'s':''}</span>
+            <span class="score-rnd">${e.roundScore!==null?'+'+e.roundScore:'…'}</span>`;
+        row.onclick = () => openPlayerModal(e.name, e.roundWords);
+        sb.appendChild(row);
+    });
+
+    // Thick separator + my found words by letter count
+    const sep = document.createElement('div');
+    sep.style.cssText = 'border-top:3px solid var(--text-muted);margin:4px 0 2px';
+    sb.appendChild(sep);
+
+    buildWordGroup(sb, roomFoundWords, validWords, 'Your Words');
+}
+
+function buildWordGroup(container, foundSet, allWords, label) {
+    if (label) {
+        const title = document.createElement('div');
+        title.style.cssText = 'font-size:0.82rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin:4px 0 2px';
+        title.textContent = label;
+        container.appendChild(title);
+    }
+
+    const groups = {};
+    for (const w of allWords) {
+        if (!groups[w.length]) groups[w.length] = [];
+        groups[w.length].push(w);
+    }
+    const keys = Object.keys(groups).sort((a,b) => a-b);
+    if (!keys.length) {
+        const none = document.createElement('div');
+        none.style.cssText = 'color:var(--text-muted);font-size:.88rem;padding:4px 0';
+        none.textContent = 'No words available.';
+        container.appendChild(none);
+        return;
+    }
+    keys.forEach(len => {
+        const words = groups[len].sort();
+        const foundCount = words.filter(w => foundSet.has(w)).length;
+        const sec = document.createElement('div'); sec.className = 'popup-section';
+        const row = document.createElement('div'); row.className = 'popup-row';
+        row.innerHTML = `<span class="popup-label">${len}-letter words</span><span class="popup-count">${foundCount} / ${words.length}</span>`;
+        sec.appendChild(row);
+        const wl = document.createElement('div'); wl.className = 'popup-words';
+        words.forEach(w => {
+            const chip = document.createElement('span'); chip.className = 'popup-chip'; chip.textContent = w;
+            if (foundSet.has(w)) { chip.style.fontWeight = '700'; chip.style.color = '#16a34a'; }
+            wl.appendChild(chip);
+        });
+        sec.appendChild(wl);
+        container.appendChild(sec);
+    });
+}
+
+function openPlayerModal(name, foundWordsArr) {
+    document.getElementById('player-modal-overlay')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'player-modal-overlay';
+    overlay.className = 'player-modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+
+    const modal = document.createElement('div');
+    modal.className = 'player-modal';
+    modal.onclick = e => e.stopPropagation();
+
+    const hdr = document.createElement('div');
+    hdr.className = 'player-modal-hdr';
+    const title = document.createElement('div');
+    title.className = 'player-modal-title';
+    title.textContent = name;
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'btn btn-outline btn-sm';
+    closeBtn.textContent = '✕';
+    closeBtn.onclick = () => overlay.remove();
+    hdr.appendChild(title); hdr.appendChild(closeBtn);
+    modal.appendChild(hdr);
+
+    const body = document.createElement('div');
+    body.className = 'player-modal-body';
+    buildWordGroup(body, new Set(foundWordsArr), validWords, null);
+    modal.appendChild(body);
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+}
+
+async function closeScoreboard() {
+    document.getElementById('player-modal-overlay')?.remove();
+    roomPlayingInitialized=false; scoreBoardShown=false; roomScoreSubmitted=false;
+    roomLastPlayedRound = roomCurrentRound;
+    await roomRef.update({
+        [`players/${playerId}/closedScoreboard`]: true,
+        [`players/${playerId}/ready`]: false
+    });
+}
+
+async function leaveRoom() {
+    if (roomRef) {
+        try {
+            roomRef.child(`players/${playerId}/online`).onDisconnect().cancel();
+            await roomRef.child(`players/${playerId}`).update({ online: false, ready: false });
+        } catch {}
+        roomRef.off(); roomRef=null;
+    }
+    if (roomCountdownInterval) { clearInterval(roomCountdownInterval); roomCountdownInterval=null; }
+
+    // Reset room state
+    roomMode=false; roomId=null; roomFoundWords=new Set(); preloadedWords=null;
+    roomPlayingInitialized=false; scoreBoardShown=false; roomScoreSubmitted=false;
+    roomLastPlayedRound=-1;
+
+    history.replaceState({}, '', location.pathname);
+
+    // Restore solo UI
+    document.getElementById('room-overlay').classList.remove('visible');
+    document.getElementById('room-bar').classList.remove('visible');
+    document.getElementById('game-container').style.display='';
+    document.getElementById('start-room-btn').style.display='';
+
+    // Reload solo board and progress
+    resetTimer();
+    await loadBoardConfig();
+    if (!preloadedWords) await loadDictionary();
+    loadProgress();
+    calculateValidWords();
+    renderBoard();
+}
+
+function shareGame() {
+    if (roomMode) return;
+    const secs = parseInt(localStorage.getItem('G2_share_time') || timerSeconds || 0);
+    const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+    const ss = String(secs % 60).padStart(2, '0');
+    const text = `🦃 I played Gobblegle! 🦃\nFound ${foundWords.size}/${validWords.size}\n${mm}:${ss}\nhttps://gobblegle.github.io/gobblegle/`;
+    if (navigator.share) {
+        navigator.share({ title: 'Gobblegle', text }).catch(() => {});
+    } else {
+        navigator.clipboard.writeText(text).then(() => {
+            const btn = document.getElementById('share-btn');
+            const prev = btn.textContent;
+            btn.textContent = '✓';
+            setTimeout(() => { btn.textContent = prev; }, 2000);
+        }).catch(() => { prompt('Copy this:', text); });
+    }
+}
+
+function shareRoom() {
+    const url  = `${location.origin}${location.pathname}?room=${roomId}`;
+    const text = 'Play Gobblegle with me!';
+    if (navigator.share) {
+        navigator.share({ title:'Gobblegle', text, url }).catch(()=>{});
+    } else {
+        navigator.clipboard.writeText(`${text} ${url}`).then(() => {
+            const btn = event.currentTarget;
+            const orig = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(()=>{ btn.textContent=orig; }, 2000);
+        }).catch(() => { prompt('Copy this link:', url); });
+    }
+}
+
+// ── Panel switching ────────────────────────────────────────────────────────
+function showPanel(panel) {
+    const overlay = document.getElementById('room-overlay');
+    const gc      = document.getElementById('game-container');
+    const bar     = document.getElementById('room-bar');
+    const lobby   = document.getElementById('lobby-panel');
+    const sb      = document.getElementById('scoreboard-panel');
+
+    if (panel === 'game') {
+        overlay.classList.remove('visible');
+        gc.style.display  = '';
+        bar.classList.add('visible');
+        lobby.style.display = 'none';
+        sb.style.display    = 'none';
+    } else {
+        overlay.classList.add('visible');
+        gc.style.display  = 'none';
+        bar.classList.remove('visible');
+        lobby.style.display = panel==='lobby'      ? '' : 'none';
+        sb.style.display    = panel==='scoreboard' ? '' : 'none';
+    }
+}
+</script>
+</body>
+</html>
