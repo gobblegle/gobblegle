@@ -1869,6 +1869,7 @@ function renderRoomPlaying(data) {
     showPanel('game');
 
     boardRows = data.board.rows; boardCols = data.board.cols; boardCells = data.board.cells;
+    preloadedWords = data.board.words?.length ? new Set(data.board.words) : null;
     roomFoundWords   = new Set();
     roomScoreSubmitted = false;
     roomCurrentRound   = data.currentRound ?? 0;
