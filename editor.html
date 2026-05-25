@@ -220,6 +220,12 @@
             <input type="date" id="board-date" style="font-family:inherit;font-size:0.85rem;padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);flex:1;min-width:0">
             <button class="btn" id="save-btn" onclick="saveBoard()">Save Board</button>
         </div>
+
+        <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+            <div style="font-size:0.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:8px">Scheduled Boards</div>
+            <div id="sched-calendar"></div>
+        </div>
+
         <div id="word-list-container" style="display:none;"></div>
     </div>
 
@@ -263,6 +269,7 @@ try { firebase.initializeApp(firebaseConfig); db = firebase.database(); } catch(
 window.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('board-date').value = new Date().toISOString().slice(0, 10);
     await loadWordSelections();
+    renderSchedCalendar(); // load async in background — don't block editor startup
     try {
         if (db) {
             const snap = await db.ref('boardConfig').once('value');
@@ -282,6 +289,119 @@ window.addEventListener('DOMContentLoaded', async () => {
     } catch {}
     buildEditorTable(false, null);
 });
+
+// ── Scheduled boards calendar ──────────────────────────────────────────────
+
+async function renderSchedCalendar() {
+    const container = document.getElementById('sched-calendar');
+    if (!db) { container.innerHTML = '<span style="font-size:0.8rem;color:var(--text-muted)">Firebase not connected.</span>'; return; }
+    container.innerHTML = '<span style="font-size:0.8rem;color:var(--text-muted)">Loading…</span>';
+    let availDates = {};
+    try {
+        const snap = await db.ref('dailyBoardDates').once('value');
+        availDates = snap.val() || {};
+    } catch { container.innerHTML = ''; return; }
+
+    container.innerHTML = '';
+    if (!Object.keys(availDates).length) {
+        container.innerHTML = '<span style="font-size:0.8rem;color:var(--text-muted)">No scheduled boards yet.</span>';
+        return;
+    }
+
+    const today = new Date();
+    // Find earliest month with a board
+    const allDates = Object.keys(availDates).sort();
+    const earliest = new Date(allDates[0] + 'T00:00:00');
+    // Show all months from earliest up to one month ahead
+    const last = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    let cur = new Date(earliest.getFullYear(), earliest.getMonth(), 1);
+    const months = [];
+    while (cur <= last) { months.push(new Date(cur)); cur.setMonth(cur.getMonth() + 1); }
+    // Most recent first
+    months.reverse().forEach(m => {
+        const el = renderSchedMonth(m, availDates);
+        if (el) container.appendChild(el);
+    });
+}
+
+function renderSchedMonth(monthDate, availDates) {
+    const year = monthDate.getFullYear();
+    const month = monthDate.getMonth();
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const prefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+    const hasBoardInMonth = Object.keys(availDates).some(d => d.startsWith(prefix));
+    const isCurrentMonth = year === new Date().getFullYear() && month === new Date().getMonth();
+    if (!hasBoardInMonth && !isCurrentMonth) return null;
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-bottom:14px';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight:700;font-size:0.85rem;margin-bottom:4px;color:var(--text)';
+    title.textContent = monthDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+    wrap.appendChild(title);
+
+    const dayHdr = document.createElement('div');
+    dayHdr.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:2px';
+    ['S','M','T','W','T','F','S'].forEach(ch => {
+        const h = document.createElement('div');
+        h.style.cssText = 'text-align:center;font-size:0.6rem;font-weight:700;color:var(--text-muted)';
+        h.textContent = ch;
+        dayHdr.appendChild(h);
+    });
+    wrap.appendChild(dayHdr);
+
+    const grid = document.createElement('div');
+    grid.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);gap:2px';
+    const firstDOW = new Date(year, month, 1).getDay();
+    for (let i = 0; i < firstDOW; i++) grid.appendChild(document.createElement('div'));
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const hasBoard = !!availDates[dateStr];
+        const isToday = dateStr === todayStr;
+        const currentDate = document.getElementById('board-date').value;
+
+        const cell = document.createElement('div');
+        cell.style.cssText = 'text-align:center;border-radius:6px;padding:4px 2px;font-size:0.78rem;font-weight:600;min-height:28px;display:flex;align-items:center;justify-content:center;';
+        cell.textContent = day;
+
+        if (hasBoard) {
+            const isSelected = dateStr === currentDate;
+            cell.style.background = isSelected ? 'var(--primary)' : 'var(--cell-active)';
+            cell.style.color = isSelected ? '#fff' : 'var(--primary)';
+            cell.style.cursor = 'pointer';
+            cell.title = `Open board for ${dateStr}`;
+            if (isToday) cell.style.outline = '2px solid var(--primary)';
+            cell.onclick = () => openDailyBoard(dateStr);
+        } else {
+            cell.style.color = 'var(--text-muted)';
+            if (isToday) { cell.style.outline = '2px solid var(--text-muted)'; }
+        }
+        grid.appendChild(cell);
+    }
+    wrap.appendChild(grid);
+    return wrap;
+}
+
+async function openDailyBoard(dateStr) {
+    if (!db) return;
+    showStatus('Loading…', 'info');
+    try {
+        const snap = await db.ref(`dailyBoards/${dateStr}`).once('value');
+        const cfg = snap.val();
+        if (!cfg) { showStatus(`No board found for ${dateStr}.`, 'err'); return; }
+        editorRows = cfg.rows; editorCols = cfg.cols;
+        buildEditorTable(false, cfg.cells);
+        document.getElementById('board-date').value = dateStr;
+        scheduleWordCount();
+        showStatus(`Loaded board for ${dateStr}. Edit and Save Board to update it.`, 'ok');
+        // Refresh calendar to reflect newly selected date
+        renderSchedCalendar();
+    } catch(e) {
+        showStatus(`Load failed: ${e.message}`, 'err');
+    }
+}
 
 // ── Save Board to Firebase ─────────────────────────────────────────────────
 
@@ -307,6 +427,7 @@ async function saveBoard() {
             const today = new Date().toISOString().slice(0, 10);
             if (dateVal === today) await db.ref('boardConfig').set(payload);
             showStatus(`Saved for ${dateVal}!`, 'ok');
+            renderSchedCalendar();
         } else {
             await db.ref('boardConfig').set(payload);
             showStatus('Board saved! Refresh the game to see the new board.', 'ok');
