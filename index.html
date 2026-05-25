@@ -270,6 +270,7 @@
 </div>
 
 <header>
+    <button id="burger-btn" onclick="toggleBurgerMenu(event)" title="Puzzles" aria-label="Puzzles" class="room-create-btn" style="position:absolute;left:16px;font-size:1.1rem;letter-spacing:0">☰</button>
     <div class="header-title">
         <div style="display:flex;align-items:center;gap:8px;">
             <img src="gobblegleturkey.png" alt="">
@@ -291,6 +292,20 @@
         </div>
     </div>
 </header>
+
+<!-- ── Puzzle browser drawer ──────────────────────────────────────────────── -->
+<div id="burger-panel" style="display:none;position:fixed;inset:0;z-index:500">
+    <div onclick="closeBurgerMenu()" style="position:absolute;inset:0;background:rgba(0,0,0,0.4)"></div>
+    <div style="position:absolute;left:0;top:0;bottom:0;width:300px;max-width:90vw;background:var(--surface);overflow-y:auto;padding:16px;box-shadow:4px 0 24px rgba(0,0,0,0.18);display:flex;flex-direction:column;gap:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <span style="font-weight:800;font-size:1.1rem">Puzzles</span>
+            <button onclick="closeBurgerMenu()" style="background:none;border:none;font-size:1.25rem;cursor:pointer;color:var(--text-muted);padding:2px 6px;line-height:1">✕</button>
+        </div>
+        <button onclick="loadTodaysPuzzle()" class="btn" style="width:100%;margin-bottom:14px">Today's Puzzle</button>
+        <div style="border-top:1px solid var(--border);padding-top:12px;font-weight:700;font-size:0.78rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:10px">Previous Puzzles</div>
+        <div id="calendar-container"></div>
+    </div>
+</div>
 
 <div class="room-bar" id="room-bar">
     <span class="room-code-label" id="room-code-label"></span>
@@ -438,6 +453,7 @@ let dictionary = new Set(), validWords = new Set(), foundWords = new Set();
 let wordCanonicalPaths = new Map(); // word -> { startKey, keys: number[] }
 let preloadedWords = null;    // pre-computed word list from Firebase (avoids full dict download)
 let gameWordSelections = new Set(); // excluded words loaded from Firebase
+let currentBoardDate = null; // YYYY-MM-DD if showing a daily board, null otherwise
 let isSelecting = false, currentPath = [];
 let timerStarted = false, timerSeconds = 0, timerInterval = null, timerPaused = false;
 
@@ -928,8 +944,20 @@ function processDictText(text) {
 // ── Board config (solo daily board) ───────────────────────────────────────
 async function loadBoardConfig() {
     preloadedWords = null;
+    currentBoardDate = null;
     try {
         if (db) {
+            // Try today's daily board first
+            const today = new Date().toISOString().slice(0, 10);
+            const dailySnap = await db.ref(`dailyBoards/${today}`).once('value');
+            if (dailySnap.exists()) {
+                const cfg = dailySnap.val();
+                boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
+                if (cfg.words?.length) preloadedWords = new Set(cfg.words);
+                currentBoardDate = today;
+                return;
+            }
+            // Fall back to boardConfig
             const snap = await db.ref('boardConfig').once('value');
             const cfg = snap.val();
             if (cfg) {
@@ -951,7 +979,10 @@ async function loadBoardConfig() {
     }
 }
 
-function getBoardHash() { return boardCells.flat().map(c => c||'_').join(''); }
+function getBoardHash() {
+    if (currentBoardDate) return `daily_${currentBoardDate}`;
+    return boardCells.flat().map(c => c||'_').join('');
+}
 
 // ── Solo progress ──────────────────────────────────────────────────────────
 function saveProgress() {
@@ -975,6 +1006,168 @@ function loadProgress() {
             timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
         }
     }
+}
+
+// ── Daily puzzle browser ────────────────────────────────────────────────────
+function toggleBurgerMenu(e) {
+    e?.stopPropagation();
+    const panel = document.getElementById('burger-panel');
+    if (panel.style.display === 'none') {
+        panel.style.display = '';
+        renderCalendar();
+    } else {
+        panel.style.display = 'none';
+    }
+}
+function closeBurgerMenu() {
+    document.getElementById('burger-panel').style.display = 'none';
+}
+
+async function renderCalendar() {
+    const container = document.getElementById('calendar-container');
+    container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Loading…</div>';
+    let availDates = {};
+    try {
+        if (db) {
+            const snap = await db.ref('dailyBoardDates').once('value');
+            availDates = snap.val() || {};
+        }
+    } catch {}
+    container.innerHTML = '';
+    const today = new Date();
+    // Show current month + up to 5 prior months that have at least one board
+    for (let mo = 0; mo <= 11; mo++) {
+        const d = new Date(today.getFullYear(), today.getMonth() - mo, 1);
+        const monthEl = renderCalendarMonth(d, availDates);
+        if (monthEl) container.appendChild(monthEl);
+        if (mo > 0 && !monthEl) break; // stop once we hit an empty month
+    }
+}
+
+function renderCalendarMonth(monthDate, availDates) {
+    const year = monthDate.getFullYear();
+    const month = monthDate.getMonth();
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    // Check if this month has any boards
+    const prefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+    const hasBoardInMonth = Object.keys(availDates).some(d => d.startsWith(prefix));
+    // Always show current month even if empty
+    const isCurrentMonth = monthDate.getFullYear() === new Date().getFullYear()
+                        && monthDate.getMonth() === new Date().getMonth();
+    if (!hasBoardInMonth && !isCurrentMonth) return null;
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-bottom:18px';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight:700;font-size:0.88rem;margin-bottom:5px;color:var(--text)';
+    title.textContent = monthDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+    wrap.appendChild(title);
+
+    const dayHdr = document.createElement('div');
+    dayHdr.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:3px';
+    ['S','M','T','W','T','F','S'].forEach(ch => {
+        const h = document.createElement('div');
+        h.style.cssText = 'text-align:center;font-size:0.65rem;font-weight:700;color:var(--text-muted)';
+        h.textContent = ch;
+        dayHdr.appendChild(h);
+    });
+    wrap.appendChild(dayHdr);
+
+    const grid = document.createElement('div');
+    grid.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);gap:2px';
+
+    // Blank padding for first day of month
+    const firstDOW = new Date(year, month, 1).getDay();
+    for (let i = 0; i < firstDOW; i++) grid.appendChild(document.createElement('div'));
+
+    for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const hasBoard = !!availDates[dateStr];
+        const isToday = dateStr === todayStr;
+        const isFuture = dateStr > todayStr;
+        const isActive = currentBoardDate === dateStr;
+
+        const cell = document.createElement('div');
+        cell.style.cssText = 'text-align:center;border-radius:6px;padding:4px 2px;font-size:0.8rem;font-weight:600;min-height:38px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:1px;';
+
+        const dayNum = document.createElement('div');
+        dayNum.textContent = day;
+
+        if (hasBoard && !isFuture) {
+            const hash = `daily_${dateStr}`;
+            const found = JSON.parse(localStorage.getItem(`G2_found_${hash}`) || '[]');
+            const total = localStorage.getItem(`G2_total_${hash}`);
+
+            cell.style.cursor = 'pointer';
+            cell.style.background = isActive ? 'var(--cell-border-active)' : 'var(--cell-active)';
+            cell.style.color = isActive ? '#fff' : 'var(--primary)';
+            if (isToday) cell.style.outline = '2px solid var(--primary)';
+
+            cell.appendChild(dayNum);
+            if (found.length > 0 && total) {
+                const prog = document.createElement('div');
+                prog.style.cssText = 'font-size:0.65rem;font-weight:700;opacity:0.75';
+                prog.textContent = `${found.length}/${total}`;
+                cell.appendChild(prog);
+            } else if (found.length > 0) {
+                const prog = document.createElement('div');
+                prog.style.cssText = 'font-size:0.65rem;font-weight:700;opacity:0.75';
+                prog.textContent = found.length;
+                cell.appendChild(prog);
+            }
+            cell.onclick = () => loadDailyBoard(dateStr);
+        } else {
+            cell.style.color = isFuture ? 'var(--border)' : 'var(--text-muted)';
+            if (isToday) {
+                cell.style.outline = '2px solid var(--text-muted)';
+                cell.style.borderRadius = '6px';
+            }
+            cell.appendChild(dayNum);
+        }
+        grid.appendChild(cell);
+    }
+    wrap.appendChild(grid);
+    return wrap;
+}
+
+async function loadTodaysPuzzle() {
+    const today = new Date().toISOString().slice(0, 10);
+    await loadDailyBoard(today);
+}
+
+async function loadDailyBoard(date) {
+    closeBurgerMenu();
+    if (roomMode) return;
+    if (currentBoardDate === date) return;
+
+    saveProgress();
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    timerStarted = false; timerPaused = false; timerSeconds = 0;
+    updateTimerDisplay();
+
+    if (!db) return;
+    try {
+        const snap = await db.ref(`dailyBoards/${date}`).once('value');
+        const cfg = snap.val();
+        if (!cfg) return;
+        boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
+        preloadedWords = cfg.words?.length ? new Set(cfg.words) : null;
+        currentBoardDate = date;
+
+        if (!preloadedWords && !dictionary.size) await loadDictionary();
+
+        foundWords = new Set();
+        loadProgress();
+        calculateValidWords();
+        localStorage.setItem(`G2_total_${getBoardHash()}`, validWords.size);
+        renderBoard();
+        clearPathUI();
+        updateScoreUI();
+        updateTileHints();
+    } catch {}
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
@@ -1004,6 +1197,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
     loadProgress();
     calculateValidWords();
+    if (currentBoardDate) localStorage.setItem(`G2_total_${getBoardHash()}`, validWords.size);
     renderBoard();
 
     document.addEventListener('click', e => {
@@ -1017,6 +1211,10 @@ window.addEventListener('DOMContentLoaded', async () => {
             && !menu.contains(e.target)
             && e.target !== document.getElementById('start-room-btn'))
             menu.style.display = 'none';
+        const burgerPanel = document.getElementById('burger-panel');
+        if (burgerPanel.style.display !== 'none'
+            && e.target === burgerPanel)  // clicking the dark overlay (not the drawer itself)
+            closeBurgerMenu();
     });
 
     window.addEventListener('popstate', () => {
@@ -1598,6 +1796,8 @@ async function initRoomMode(rid) {
     saveProgress(); // snapshot solo state before room board overwrites boardCells
     pauseTimer();   // stop auto-save interval so it can't write under the wrong hash
     await loadGameWordSelections(); // needed by host for filtered board generation
+    document.getElementById('burger-btn').style.display = 'none';
+    closeBurgerMenu();
 
     roomMode  = true;
     roomId    = rid;
@@ -2152,6 +2352,7 @@ async function leaveRoom() {
     document.getElementById('room-bar').classList.remove('visible');
     document.getElementById('game-container').style.display='';
     document.getElementById('start-room-btn').style.display='';
+    document.getElementById('burger-btn').style.display='';
 
     // Reload solo board and progress
     resetTimer();

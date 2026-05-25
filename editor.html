@@ -214,6 +214,10 @@
             <button class="btn btn-sec" onclick="clearAll()">Clear</button>
             <button class="btn btn-sec" onclick="openWordSelect()">Select Words</button>
             <button class="btn btn-sec" onclick="testBoard()">Test</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+            <label for="board-date" style="font-size:0.82rem;font-weight:600;color:var(--text-muted);white-space:nowrap">Publish date:</label>
+            <input type="date" id="board-date" style="font-family:inherit;font-size:0.85rem;padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);flex:1;min-width:0">
             <button class="btn" id="save-btn" onclick="saveBoard()">Save Board</button>
         </div>
         <div id="word-list-container" style="display:none;"></div>
@@ -257,6 +261,7 @@ let db = null;
 try { firebase.initializeApp(firebaseConfig); db = firebase.database(); } catch(e) {}
 
 window.addEventListener('DOMContentLoaded', async () => {
+    document.getElementById('board-date').value = new Date().toISOString().slice(0, 10);
     await loadWordSelections();
     try {
         if (db) {
@@ -288,6 +293,7 @@ async function saveBoard() {
         return;
     }
     if (!db) { showStatus('Firebase not connected.', 'err'); return; }
+    const dateVal = document.getElementById('board-date').value; // YYYY-MM-DD or ''
     const btn = document.getElementById('save-btn');
     btn.disabled = true;
     showStatus('Saving…', 'info');
@@ -295,8 +301,16 @@ async function saveBoard() {
         const payload = { rows: editorRows, cols: editorCols, cells };
         const activeWords = _edCurrentWords.filter(w => !edWordSelections.has(w));
         if (activeWords.length) payload.words = activeWords;
-        await db.ref('boardConfig').set(payload);
-        showStatus('Board saved! Refresh the game to see the new board.', 'ok');
+        if (dateVal) {
+            await db.ref(`dailyBoards/${dateVal}`).set(payload);
+            await db.ref(`dailyBoardDates/${dateVal}`).set(true);
+            const today = new Date().toISOString().slice(0, 10);
+            if (dateVal === today) await db.ref('boardConfig').set(payload);
+            showStatus(`Saved for ${dateVal}!`, 'ok');
+        } else {
+            await db.ref('boardConfig').set(payload);
+            showStatus('Board saved! Refresh the game to see the new board.', 'ok');
+        }
     } catch(e) {
         showStatus(`Save failed: ${e.message}`, 'err');
     }
