@@ -2369,7 +2369,7 @@ function shareGame() {
     const mm = String(Math.floor(secs / 60)).padStart(2, '0');
     const ss = String(secs % 60).padStart(2, '0');
     const score = totalScore(foundWords);
-    const text = `🦃 I played Gobblegle! 🦃\nFound ${foundWords.size}/${validWords.size}\nScore: ${score}\n${mm}:${ss}\nhttps://gobblegle.github.io/gobblegle/`;
+    const text = `🦃 I played Gobblegle! 🦃\nFound: ${foundWords.size}/${validWords.size}\nScore: ${score}\n${mm}:${ss}\nhttps://gobblegle.github.io/gobblegle/`;
     if (navigator.share) {
         navigator.share({ title: 'Gobblegle', text }).catch(() => {});
     } else {
