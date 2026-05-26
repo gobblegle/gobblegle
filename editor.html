@@ -206,7 +206,7 @@
         <div style="font-size:0.85rem;font-weight:600;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between;gap:8px;">
             <span>Valid words: <span id="word-count" style="color:var(--primary)">—</span></span>
             <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:600;font-size:0.82rem;">
-                <input type="checkbox" id="show-words-cb" onchange="renderWordList()"> Show words
+                <input type="checkbox" id="show-words-cb" onchange="renderWordList()" checked> Show words
             </label>
         </div>
         <div class="status" id="status"></div>
@@ -671,17 +671,26 @@ function renderWordSelectList() {
         const gbtn = document.createElement('button');
         gbtn.className = 'ws-btn ws-btn-green' + (edWordApprovals.has(word) ? ' active' : '');
         gbtn.innerHTML = '✓';
-        gbtn.onclick = async () => {
-            const nowApproved = await _toggleWordAppr(word);
-            gbtn.className = 'ws-btn ws-btn-green' + (nowApproved ? ' active' : '');
-        };
 
         const rbtn = document.createElement('button');
         rbtn.className = 'ws-btn ws-btn-red' + (edWordSelections.has(word) ? ' active' : '');
         rbtn.innerHTML = '✕';
+
+        gbtn.onclick = async () => {
+            const nowApproved = await _toggleWordAppr(word);
+            gbtn.className = 'ws-btn ws-btn-green' + (nowApproved ? ' active' : '');
+            if (nowApproved && edWordSelections.has(word)) {
+                await _toggleWordSel(word); // unselect red
+                rbtn.className = 'ws-btn ws-btn-red';
+            }
+        };
         rbtn.onclick = async () => {
             const nowExcluded = await _toggleWordSel(word);
             rbtn.className = 'ws-btn ws-btn-red' + (nowExcluded ? ' active' : '');
+            if (nowExcluded && edWordApprovals.has(word)) {
+                await _toggleWordAppr(word); // unselect green
+                gbtn.className = 'ws-btn ws-btn-green';
+            }
         };
 
         row.appendChild(wspan); row.appendChild(gbtn); row.appendChild(rbtn);
