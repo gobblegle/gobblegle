@@ -929,6 +929,8 @@ async function loadBoardConfig() {
         try {
             const cfg = JSON.parse(saved);
             boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
+            const selSaved = localStorage.getItem('G2_test_word_sel');
+            if (selSaved) gameWordSelections = new Set(JSON.parse(selSaved));
             return;
         } catch {}
     }
@@ -1138,7 +1140,7 @@ function getCellAtPoint(px, py) {
             if (!el) continue;
             const rect = el.getBoundingClientRect();
             const cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
-            if ((px-cx)**2 + (py-cy)**2 <= (rect.width/2)**2) return {r,c};
+            if ((px-cx)**2 + (py-cy)**2 <= (rect.width * 0.45)**2) return {r,c};
         }
     return null;
 }

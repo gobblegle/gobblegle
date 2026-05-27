@@ -449,11 +449,11 @@ async function saveBoard() {
 
 function testBoard() {
     const { cells, hasAny } = readCells();
-    if (!hasAny) { showStatus('Nothing to test — enter some letters first.', 'err'); return; }
-    if (!isConnected(cells, editorRows, editorCols)) {
+    if (hasAny && !isConnected(cells, editorRows, editorCols)) {
         showStatus('Letters are not all connected.', 'err'); return;
     }
     localStorage.setItem('G2_test_board', JSON.stringify({ rows: editorRows, cols: editorCols, cells }));
+    localStorage.setItem('G2_test_word_sel', JSON.stringify([...edWordSelections]));
     window.open('./test.html', '_blank');
 }
 

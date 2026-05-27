@@ -383,12 +383,15 @@
             </div>
             <div class="setting-row" id="custom-size-row" style="display:none">
                 <span class="setting-label">Rows × Cols</span>
-                <div style="display:flex;align-items:center;gap:6px">
-                    <input class="minutes-input" type="number" id="custom-rows" min="2" max="10" value="5"
-                           onchange="applyCustomSize()">
-                    <span class="hint">×</span>
-                    <input class="minutes-input" type="number" id="custom-cols" min="2" max="10" value="5"
-                           onchange="applyCustomSize()">
+                <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">
+                    <div style="display:flex;align-items:center;gap:6px">
+                        <input class="minutes-input" type="number" id="custom-rows" min="2" max="10" value="5"
+                               onchange="applyCustomSize()">
+                        <span class="hint">×</span>
+                        <input class="minutes-input" type="number" id="custom-cols" min="2" max="10" value="5"
+                               onchange="applyCustomSize()">
+                    </div>
+                    <span id="custom-size-error" style="display:none;color:var(--error);font-size:0.78rem;font-weight:600">Minimum 6 letters</span>
                 </div>
             </div>
             <div class="setting-row">
@@ -987,8 +990,9 @@ function getBoardHash() {
 // ── Solo progress ──────────────────────────────────────────────────────────
 function saveProgress() {
     const h = getBoardHash();
+    const won = validWords.size > 0 && foundWords.size >= validWords.size;
     localStorage.setItem(`G2_found_${h}`, JSON.stringify([...foundWords]));
-    localStorage.setItem(`G2_timer_${h}`, JSON.stringify({ s: timerSeconds, started: timerStarted, paused: timerPaused }));
+    localStorage.setItem(`G2_timer_${h}`, JSON.stringify({ s: timerSeconds, started: timerStarted, paused: timerPaused, won }));
 }
 function loadProgress() {
     const h = getBoardHash();
@@ -998,9 +1002,8 @@ function loadProgress() {
     updateTimerDisplay();
     if (saved.started) {
         timerStarted = true;
-        if (saved.paused) {
+        if (saved.paused && saved.won) {
             timerPaused = true;
-            // timer stays paused (e.g. already won) — don't restart interval
         } else {
             timerPaused = false;
             timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
@@ -1379,7 +1382,7 @@ function getCellAtPoint(px, py) {
             if (!el) continue;
             const rect = el.getBoundingClientRect();
             const cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
-            if ((px-cx)**2 + (py-cy)**2 <= (rect.width/2)**2) return {r,c};
+            if ((px-cx)**2 + (py-cy)**2 <= (rect.width * 0.45)**2) return {r,c};
         }
     return null;
 }
@@ -2008,6 +2011,9 @@ function setRoomSizeCustom() {
 function applyCustomSize() {
     const r = parseInt(document.getElementById('custom-rows').value) || 5;
     const c = parseInt(document.getElementById('custom-cols').value) || 5;
+    const errEl = document.getElementById('custom-size-error');
+    if (r * c < 6) { errEl.style.display = ''; return; }
+    errEl.style.display = 'none';
     roomRef.child('settings').update({ rows: r, cols: c, custom: true, mode: 'shaped' });
 }
 
