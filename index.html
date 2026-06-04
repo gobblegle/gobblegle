@@ -108,6 +108,23 @@
         .popup-count { font-weight: 700; color: var(--primary); }
         .popup-words { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 3px 0 6px; }
         .popup-chip { color: var(--text); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+        .popup-remaining { font-size: 0.75rem; color: var(--text-muted); padding: 2px 0 0; font-style: italic; }
+
+        .answer-reveal-btn {
+            display: block; width: 100%; padding: 8px 0;
+            background: none; border: 1px solid var(--border); border-radius: 8px;
+            color: var(--text-muted); font-size: 0.85rem; font-weight: 600;
+            cursor: pointer; text-align: center; font-family: inherit;
+        }
+        .answer-reveal-btn:hover { background: var(--cell-active); color: var(--primary); border-color: var(--cell-border-active); }
+        .answer-list {
+            background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+            padding: 12px 14px; margin-top: 8px; display: flex; flex-direction: column; gap: 8px;
+        }
+        .answer-list-title { font-size: 0.78rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.07em; }
+        .answer-chips { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+        .answer-chip { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text); }
+        .answer-chip.found { color: #22c55e; }
 
         .current-word {
             min-height: 46px; display: flex; align-items: center;
@@ -334,6 +351,7 @@
         </div>
     </div>
     <div class="timer" id="timer-display">00:00</div>
+    <div id="answer-reveal-section" style="display:none;margin-top:6px"></div>
 </div>
 
 <div class="room-overlay" id="room-overlay">
@@ -457,6 +475,7 @@ let wordCanonicalPaths = new Map(); // word -> { startKey, keys: number[] }
 let preloadedWords = null;    // pre-computed word list from Firebase (avoids full dict download)
 let gameWordSelections = new Set(); // excluded words loaded from Firebase
 let currentBoardDate = null; // YYYY-MM-DD if showing a daily board, null otherwise
+let answersRevealed = false;
 let isSelecting = false, currentPath = [];
 let timerStarted = false, timerSeconds = 0, timerInterval = null, timerPaused = false;
 
@@ -912,9 +931,14 @@ function generateRoomId() {
 }
 
 function getPlayerId() {
-    let id = sessionStorage.getItem('gob_pid');
-    if (!id) { id = Date.now().toString(36) + Math.random().toString(36).slice(2); sessionStorage.setItem('gob_pid', id); }
+    let id = localStorage.getItem('gob_pid');
+    if (!id) { id = Date.now().toString(36) + Math.random().toString(36).slice(2); localStorage.setItem('gob_pid', id); }
     return id;
+}
+
+// Puzzle switches at 2am EST (UTC-5) = 7am UTC
+function getPuzzleDate() {
+    return new Date(Date.now() - 7 * 3600000).toISOString().slice(0, 10);
 }
 
 // ── Dictionary ─────────────────────────────────────────────────────────────
@@ -951,7 +975,7 @@ async function loadBoardConfig() {
     try {
         if (db) {
             // Try today's daily board first
-            const today = new Date().toISOString().slice(0, 10);
+            const today = getPuzzleDate();
             const dailySnap = await db.ref(`dailyBoards/${today}`).once('value');
             if (dailySnap.exists()) {
                 const cfg = dailySnap.val();
@@ -993,16 +1017,18 @@ function saveProgress() {
     const won = validWords.size > 0 && foundWords.size >= validWords.size;
     localStorage.setItem(`G2_found_${h}`, JSON.stringify([...foundWords]));
     localStorage.setItem(`G2_timer_${h}`, JSON.stringify({ s: timerSeconds, started: timerStarted, paused: timerPaused, won }));
+    if (answersRevealed) localStorage.setItem(`G2_answers_${h}`, '1');
 }
 function loadProgress() {
     const h = getBoardHash();
     foundWords = new Set(JSON.parse(localStorage.getItem(`G2_found_${h}`) || '[]'));
+    answersRevealed = localStorage.getItem(`G2_answers_${h}`) === '1';
     const saved = JSON.parse(localStorage.getItem(`G2_timer_${h}`) || '{}');
     timerSeconds = saved.s || 0;
     updateTimerDisplay();
     if (saved.started) {
         timerStarted = true;
-        if (saved.paused && saved.won) {
+        if ((saved.paused && saved.won) || answersRevealed) {
             timerPaused = true;
         } else {
             timerPaused = false;
@@ -1050,7 +1076,7 @@ async function renderCalendar() {
 function renderCalendarMonth(monthDate, availDates) {
     const year = monthDate.getFullYear();
     const month = monthDate.getMonth();
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = getPuzzleDate();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
 
     // Check if this month has any boards
@@ -1137,8 +1163,7 @@ function renderCalendarMonth(monthDate, availDates) {
 }
 
 async function loadTodaysPuzzle() {
-    const today = new Date().toISOString().slice(0, 10);
-    await loadDailyBoard(today);
+    await loadDailyBoard(getPuzzleDate());
 }
 
 async function loadDailyBoard(date) {
@@ -1162,6 +1187,7 @@ async function loadDailyBoard(date) {
 
         if (!preloadedWords && !dictionary.size) await loadDictionary();
 
+        answersRevealed = false;
         foundWords = new Set();
         loadProgress();
         calculateValidWords();
@@ -1170,6 +1196,7 @@ async function loadDailyBoard(date) {
         clearPathUI();
         updateScoreUI();
         updateTileHints();
+        updateAnswerRevealSection();
     } catch {}
 }
 
@@ -1202,13 +1229,17 @@ window.addEventListener('DOMContentLoaded', async () => {
     calculateValidWords();
     if (currentBoardDate) localStorage.setItem(`G2_total_${getBoardHash()}`, validWords.size);
     renderBoard();
+    updateAnswerRevealSection();
 
-    document.addEventListener('click', e => {
+    function closePopupIfOutside(target) {
         const popup = document.getElementById('word-popup');
         if (popup.style.display !== 'none'
-            && !popup.contains(e.target)
-            && e.target !== document.getElementById('score-btn'))
+            && !popup.contains(target)
+            && target !== document.getElementById('score-btn'))
             popup.style.display = 'none';
+    }
+    document.addEventListener('click', e => {
+        closePopupIfOutside(e.target);
         const menu = document.getElementById('room-menu');
         if (menu.style.display !== 'none'
             && !menu.contains(e.target)
@@ -1219,6 +1250,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             && e.target === burgerPanel)  // clicking the dark overlay (not the drawer itself)
             closeBurgerMenu();
     });
+    document.addEventListener('touchstart', e => { closePopupIfOutside(e.target); }, {passive: true});
 
     window.addEventListener('popstate', () => {
         if (roomMode && !new URLSearchParams(location.search).get('room')) leaveRoom();
@@ -1399,6 +1431,7 @@ function setupPointerListeners() {
 }
 
 function startSelection(r, c) {
+    if (answersRevealed) return;
     isSelecting = true;
     currentPath = [{r,c}];
     if (!roomMode) startTimer();
@@ -1658,6 +1691,64 @@ function updateRoomScoreUI() {
     document.getElementById('room-score-display').textContent = `Score: ${totalScore(roomFoundWords)}`;
 }
 
+// ── Answer reveal (past puzzles) ────────────────────────────────────────────
+function updateAnswerRevealSection() {
+    const sec = document.getElementById('answer-reveal-section');
+    if (!sec) return;
+    const isPast = currentBoardDate && currentBoardDate < getPuzzleDate() && !roomMode;
+    if (!isPast) { sec.style.display = 'none'; sec.innerHTML = ''; return; }
+    sec.style.display = '';
+    sec.innerHTML = '';
+    if (!answersRevealed) {
+        const btn = document.createElement('button');
+        btn.className = 'answer-reveal-btn';
+        btn.textContent = '☑ Show Answers';
+        btn.onclick = revealAnswers;
+        sec.appendChild(btn);
+    } else {
+        renderAnswerList(sec);
+    }
+}
+
+function revealAnswers() {
+    if (answersRevealed) return;
+    answersRevealed = true;
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    timerPaused = true;
+    saveProgress();
+    updateAnswerRevealSection();
+}
+
+function renderAnswerList(container) {
+    const list = document.createElement('div');
+    list.className = 'answer-list';
+    const title = document.createElement('div');
+    title.className = 'answer-list-title';
+    title.textContent = 'Answers';
+    list.appendChild(title);
+    const groups = {};
+    for (const w of validWords) {
+        if (!groups[w.length]) groups[w.length] = [];
+        groups[w.length].push(w);
+    }
+    Object.keys(groups).sort((a,b) => a-b).forEach(len => {
+        const grpTitle = document.createElement('div');
+        grpTitle.style.cssText = 'font-size:0.78rem;font-weight:700;color:var(--text-muted);margin-top:4px';
+        grpTitle.textContent = `${len}-letter words`;
+        list.appendChild(grpTitle);
+        const chips = document.createElement('div');
+        chips.className = 'answer-chips';
+        groups[len].sort().forEach(w => {
+            const chip = document.createElement('span');
+            chip.className = 'answer-chip' + (foundWords.has(w) ? ' found' : '');
+            chip.textContent = w;
+            chips.appendChild(chip);
+        });
+        list.appendChild(chips);
+    });
+    container.appendChild(list);
+}
+
 // ── Word popup ─────────────────────────────────────────────────────────────
 function togglePopup(e) {
     e.stopPropagation();
@@ -1687,6 +1778,12 @@ function togglePopup(e) {
                 const wl=document.createElement('div'); wl.className='popup-words';
                 wf.forEach(w=>{const chip=document.createElement('span');chip.className='popup-chip';chip.textContent=w;wl.appendChild(chip);});
                 sec.appendChild(wl);
+            }
+            const remaining = total - fc;
+            if (remaining > 0) {
+                const rem=document.createElement('div'); rem.className='popup-remaining';
+                rem.textContent=`${remaining} remaining`;
+                sec.appendChild(rem);
             }
             popup.appendChild(sec);
         });
@@ -1836,11 +1933,6 @@ async function initRoomMode(rid) {
 
     roomRef.on('value', snap => handleRoomUpdate(snap.val()));
 
-    document.addEventListener('click', e => {
-        const popup=document.getElementById('word-popup');
-        if(popup.style.display!=='none'&&!popup.contains(e.target)&&e.target!==document.getElementById('score-btn'))
-            popup.style.display='none';
-    });
 }
 
 function handleRoomUpdate(data) {
@@ -1855,6 +1947,14 @@ function handleRoomUpdate(data) {
         if (data.currentRound !== roomCurrentRound) {
             roomPlayingInitialized = false;
             scoreBoardShown = false;
+        }
+        // If I just (re)connected and I'm the only online player, everyone left — cancel game
+        if (!roomPlayingInitialized) {
+            const onlinePlayers = Object.entries(data.players || {}).filter(([,p]) => p.online !== false);
+            if (onlinePlayers.every(([pid]) => pid === playerId)) {
+                roomRef.update({ state: 'lobby' });
+                return;
+            }
         }
         // Late joiner: not in player list yet — show lobby for name entry
         if (!data.players?.[playerId]) {
