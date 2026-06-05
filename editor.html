@@ -162,6 +162,11 @@
         .ws-btn-green.active { border-color: #16a34a; background: #16a34a; color: #fff; }
         .ws-btn-red { border-color: #fecaca; color: #fecaca; }
         .ws-btn-red.active { border-color: #dc2626; background: #dc2626; color: #fff; }
+        .ws-add {
+            padding: 10px 18px; border-top: 1px solid var(--border);
+            display: flex; gap: 8px; align-items: center;
+        }
+        .ws-add .field-input { flex: 1; text-transform: uppercase; }
         .ws-footer {
             padding: 12px 18px; border-top: 1px solid var(--border);
             display: flex; gap: 8px; justify-content: flex-end; align-items: center;
@@ -251,6 +256,12 @@
             <span style="width:28px;text-align:center;color:#dc2626">✕</span>
         </div>
         <div class="ws-body" id="ws-body"></div>
+        <div class="ws-add">
+            <input type="text" id="ws-add-input" class="field-input" placeholder="Add a word…"
+                   autocomplete="off" spellcheck="false"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();addManualWord();}">
+            <button class="btn" style="padding:9px 16px" onclick="addManualWord()">Add</button>
+        </div>
         <div class="ws-footer">
             <span class="ws-footer-note">✓ approved &nbsp;·&nbsp; ✕ excluded from valid list</span>
             <button class="btn btn-sec" onclick="closeWordSelect()">Cancel</button>
@@ -657,11 +668,32 @@ function applyWordSelections() {
     closeWordSelect();
 }
 
+function addManualWord() {
+    const input = document.getElementById('ws-add-input');
+    const word = (input.value || '').trim().toUpperCase().replace(/[^A-Z]/g, '');
+    if (!word) return;
+    // Already present (computed or previously added)? just clear and bail.
+    if (_edCurrentWords.includes(word) || _edAddedWords.includes(word)) {
+        input.value = '';
+        return;
+    }
+    _edAddedWords.push(word);
+    _edCurrentWords.push(word);
+    // Default the added word to green (approved).
+    if (!edWordApprovals.has(word)) _toggleWordAppr(word);
+    input.value = '';
+    renderWordSelectList();
+    document.getElementById('ws-body').scrollTop = document.getElementById('ws-body').scrollHeight;
+}
+
 function renderWordSelectList() {
     const body = document.getElementById('ws-body');
-    const sorted = [..._edCurrentWords].sort((a, b) => a.length - b.length || a.localeCompare(b));
+    const computed = _edCurrentWords.filter(w => !_edAddedWords.includes(w))
+        .sort((a, b) => a.length - b.length || a.localeCompare(b));
+    // Manually-added words stay at the bottom in the order they were added.
+    const ordered = [...computed, ..._edAddedWords];
     body.innerHTML = '';
-    for (const word of sorted) {
+    for (const word of ordered) {
         const row = document.createElement('div');
         row.className = 'ws-row';
 
@@ -742,6 +774,8 @@ function scheduleWordCount() {
 }
 
 let _edCurrentWords = [];
+// Words added manually this session — kept at the bottom, not reordered.
+let _edAddedWords = [];
 
 function updateWordCount() {
     const el = document.getElementById('word-count');
@@ -756,6 +790,8 @@ function updateWordCount() {
         for (const ch of word) if (!ls.has(ch)) { ok=false; break; }
         if (ok && edCanSpell(word, cells, editorRows, editorCols)) words.push(word);
     }
+    // Keep any manually-added words (not spellable on the board) in the list.
+    for (const w of _edAddedWords) if (!words.includes(w)) words.push(w);
     _edCurrentWords = words;
     const activeCount = words.filter(w => !edWordSelections.has(w)).length;
     el.textContent = activeCount.toLocaleString();
