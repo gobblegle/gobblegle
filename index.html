@@ -967,9 +967,26 @@ function getPlayerId() {
     return id;
 }
 
-// Puzzle switches at 2am EST (UTC-5) = 7am UTC
+// The daily puzzle switches at 5:00 AM US Eastern time. Eastern observes
+// daylight saving (EST = UTC-5 in winter, EDT = UTC-4 in summer), so we read
+// the wall-clock time in America/New_York directly — the browser applies the
+// correct DST offset for the given moment, no matter the viewer's own timezone.
+// Effect: the puzzle date only advances once it's 5 AM or later in New York.
 function getPuzzleDate() {
-    return new Date(Date.now() - 7 * 3600000).toISOString().slice(0, 10);
+    // Current wall-clock parts in New York (handles DST automatically).
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York',
+        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false
+    }).formatToParts(new Date());
+    const get = t => parts.find(p => p.type === t).value;
+    // en-CA formats the date as YYYY-MM-DD; build a Date at NY midnight for that day.
+    let y = +get('year'), m = +get('month'), d = +get('day');
+    let hour = +get('hour');
+    if (hour === 24) hour = 0; // some engines report midnight as 24
+    // Before 5 AM Eastern, the active puzzle is still the previous calendar day.
+    const nyMidnight = new Date(Date.UTC(y, m - 1, d));
+    if (hour < 5) nyMidnight.setUTCDate(nyMidnight.getUTCDate() - 1);
+    return nyMidnight.toISOString().slice(0, 10);
 }
 
 // ── Dictionary ─────────────────────────────────────────────────────────────
