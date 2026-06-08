@@ -25,6 +25,29 @@
             --cell-active: #ffedd5;
             --cell-border-active: #fb923c;
             --error: #c9605a;
+            /* tile/text colors that differ between themes */
+            --tile-bg: #ffffff;
+            --word-default: #3a3a3a;
+            --word-already: #94a3b8;
+            --exhausted-text: #c0c0c0;
+            --exhausted-border: #ede5dc;
+        }
+        body.dark {
+            --primary: #e07a4b;
+            --primary-hover: #c2603a;
+            --bg: #1c1512;
+            --surface: #2a211c;
+            --text: #f0e6dd;
+            --text-muted: #b09a86;
+            --border: #463a31;
+            --cell-active: #4a3322;
+            --cell-border-active: #c2603a;
+            --error: #d8736c;
+            --tile-bg: #33281f;
+            --word-default: #d8cabd;
+            --word-already: #7c6f64;
+            --exhausted-text: #6b5d50;
+            --exhausted-border: #3a2f27;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
         body {
@@ -102,7 +125,7 @@
             color: var(--text-muted); font-size: 0.85rem; font-weight: 600;
             cursor: pointer; text-align: center; font-family: inherit;
         }
-        .popup-reset:hover { background: #fff1f1; color: var(--error); border-color: var(--error); }
+        .popup-reset:hover { background: var(--cell-active); color: var(--error); border-color: var(--error); }
         .popup-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 0.9rem; }
         .popup-label { font-weight: 600; color: var(--text-muted); }
         .popup-count { font-weight: 700; color: var(--primary); }
@@ -129,11 +152,11 @@
         .current-word {
             min-height: 46px; display: flex; align-items: center;
             justify-content: center; font-size: 1.9rem; font-weight: 800;
-            letter-spacing: 0.1em; color: #3a3a3a;
+            letter-spacing: 0.1em; color: var(--word-default);
             background: var(--surface); border-radius: 12px;
         }
         .current-word.found    { color: #22c55e; }
-        .current-word.already  { color: #94a3b8; }
+        .current-word.already  { color: var(--word-already); }
         .current-word.error    { color: var(--error); }
         .current-word.small    { font-size: 1.1rem; }
         .current-word.settling { transition: opacity 0.6s ease; }
@@ -144,7 +167,7 @@
         }
         .grid { display: grid; gap: 8px; }
         .grid-cell {
-            background: #fff; border: 2px solid var(--border); border-radius: 12px;
+            background: var(--tile-bg); border: 2px solid var(--border); border-radius: 12px;
             display: flex; align-items: center; justify-content: center;
             font-size: var(--cell-font, 2.5rem); font-weight: 700; text-transform: uppercase;
             width: var(--cell-size, 54px); height: var(--cell-size, 54px);
@@ -153,9 +176,9 @@
         }
         .grid-cell.active { background: var(--cell-active); border-color: var(--cell-border-active); transform: scale(0.93); }
         .grid-cell.empty  { background: transparent; border: none; pointer-events: none; }
-        .grid-cell.exhausted:not(.active) { color: #c0c0c0; border-color: #ede5dc; }
+        .grid-cell.exhausted:not(.active) { color: var(--exhausted-text); border-color: var(--exhausted-border); }
         .tile-hint-start { position:absolute; bottom:3px; left:4px; font-size:calc(var(--cell-font) * 0.3); font-weight:700; color:#fb923c; line-height:1; pointer-events:none; }
-        .tile-hint-usage { position:absolute; bottom:3px; right:4px; font-size:calc(var(--cell-font) * 0.3); font-weight:700; color:#94a3b8; line-height:1; pointer-events:none; }
+        .tile-hint-usage { position:absolute; bottom:3px; right:4px; font-size:calc(var(--cell-font) * 0.3); font-weight:700; color:var(--word-already); line-height:1; pointer-events:none; }
         .svg-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
 
         .timer { text-align: center; font-size: 1.1rem; font-weight: 700; color: var(--text-muted); letter-spacing: 0.12em; }
@@ -280,6 +303,10 @@
     </style>
 </head>
 <body>
+<script>
+    // Apply saved dark-mode preference immediately to avoid a flash of light theme.
+    try { if (localStorage.getItem('G2_dark_mode') === '1') document.body.classList.add('dark'); } catch {}
+</script>
 
 <div class="loader" id="loader">
     <div class="spinner"></div>
@@ -321,6 +348,10 @@
         <button onclick="loadTodaysPuzzle()" class="btn" style="width:100%;margin-bottom:14px">Today's Puzzle</button>
         <div style="border-top:1px solid var(--border);padding-top:12px;font-weight:700;font-size:0.78rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:10px">Previous Puzzles</div>
         <div id="calendar-container"></div>
+        <label style="margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--border);padding-top:14px;margin-top:18px;cursor:pointer;font-weight:600;font-size:0.9rem;color:var(--text)">
+            <span style="display:flex;align-items:center;gap:8px"><span id="dark-mode-icon">🌙</span> Dark Mode</span>
+            <input type="checkbox" id="dark-mode-toggle" onchange="setDarkMode(this.checked)" style="width:18px;height:18px;cursor:pointer;accent-color:var(--primary)">
+        </label>
     </div>
 </div>
 
@@ -1052,6 +1083,21 @@ function closeBurgerMenu() {
     document.getElementById('burger-panel').style.display = 'none';
 }
 
+// ── Dark mode ───────────────────────────────────────────────────────────────
+function setDarkMode(on) {
+    document.body.classList.toggle('dark', on);
+    try { localStorage.setItem('G2_dark_mode', on ? '1' : '0'); } catch {}
+    const icon = document.getElementById('dark-mode-icon');
+    if (icon) icon.textContent = on ? '☀️' : '🌙';
+}
+function syncDarkModeToggle() {
+    const on = document.body.classList.contains('dark');
+    const cb = document.getElementById('dark-mode-toggle');
+    if (cb) cb.checked = on;
+    const icon = document.getElementById('dark-mode-icon');
+    if (icon) icon.textContent = on ? '☀️' : '🌙';
+}
+
 async function renderCalendar() {
     const container = document.getElementById('calendar-container');
     container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Loading…</div>';
@@ -1203,6 +1249,7 @@ async function loadDailyBoard(date) {
 // ── Init ───────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
     setupPointerListeners();
+    syncDarkModeToggle();
 
     const rid = new URLSearchParams(location.search).get('room');
 
