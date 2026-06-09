@@ -132,6 +132,52 @@
         .popup-words { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 3px 0 6px; }
         .popup-chip { color: var(--text); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
         .popup-remaining { font-size: 0.75rem; color: var(--text-muted); padding: 2px 0 0; font-style: italic; }
+        .popup-views { display: flex; gap: 6px; margin-bottom: 8px; }
+        .popup-view-btn {
+            flex: 1; padding: 4px 0; border: 1px solid var(--border); border-radius: 8px;
+            background: none; color: var(--text-muted); font-size: 0.8rem; font-weight: 700;
+            cursor: pointer; font-family: inherit; text-align: center;
+        }
+        .popup-view-btn:hover { background: var(--cell-active); }
+        .popup-view-btn.active { background: var(--cell-active); color: var(--primary); border-color: var(--cell-border-active); }
+
+        /* ── Hint panel ── */
+        .popup-hint-btn {
+            display: block; width: 100%; margin-top: 10px; padding: 9px 0;
+            background: var(--cell-active); border: 1px solid var(--cell-border-active); border-radius: 8px;
+            color: var(--primary); font-size: 0.88rem; font-weight: 700;
+            cursor: pointer; text-align: center; font-family: inherit;
+        }
+        .popup-hint-btn:hover { background: var(--cell-border-active); color: #fff; }
+        .hint-back-btn {
+            background: none; border: none; color: var(--text-muted); font-size: 0.85rem;
+            font-weight: 700; cursor: pointer; font-family: inherit; padding: 0; margin-bottom: 8px;
+        }
+        .hint-back-btn:hover { color: var(--primary); }
+        .hint-title { font-size: 0.9rem; font-weight: 800; color: var(--text); margin-bottom: 8px; }
+        .hint-option {
+            display: block; width: 100%; margin-bottom: 7px; padding: 9px 12px;
+            background: none; border: 1px solid var(--border); border-radius: 8px;
+            color: var(--text); font-size: 0.85rem; font-weight: 600;
+            cursor: pointer; text-align: left; font-family: inherit;
+        }
+        .hint-option:hover:not(:disabled) { background: var(--cell-active); border-color: var(--cell-border-active); color: var(--primary); }
+        .hint-option:disabled { opacity: 0.5; cursor: default; }
+        .hint-len-btn {
+            display: inline-block; margin: 0 6px 6px 0; padding: 7px 14px;
+            background: var(--cell-active); border: 1px solid var(--cell-border-active); border-radius: 8px;
+            color: var(--primary); font-size: 0.82rem; font-weight: 700;
+            cursor: pointer; font-family: inherit;
+        }
+        .hint-len-btn:hover { background: var(--cell-border-active); color: #fff; }
+        .hint-reveal-row { display: flex; flex-wrap: wrap; gap: 0; padding: 4px 0 2px; }
+        .hint-reveal-chip {
+            color: var(--text); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.12em;
+            text-transform: uppercase; margin: 0 10px 4px 0; white-space: nowrap;
+        }
+        .hint-reveal-chip.missing { color: var(--word-already); }
+        .hint-reveal-chip.found   { color: #22c55e; }
+        .hint-note { font-size: 0.75rem; color: var(--text-muted); font-style: italic; padding: 2px 0 0; }
 
         .answer-reveal-btn {
             display: block; width: 100%; padding: 8px 0;
@@ -157,6 +203,7 @@
         }
         .current-word.found    { color: #22c55e; }
         .current-word.already  { color: var(--word-already); }
+        .current-word.bonus    { color: var(--word-already); }
         .current-word.error    { color: var(--error); }
         .current-word.small    { font-size: 1.1rem; }
         .current-word.settling { transition: opacity 0.6s ease; }
@@ -502,8 +549,12 @@ try {
 const DICT_CACHE_KEY = 'G2_dict_v3';
 let boardRows = 5, boardCols = 5, boardCells = [], cellElements = [];
 let dictionary = new Set(), validWords = new Set(), foundWords = new Set();
+// "Linguist Bonus" words: board-spellable words that were red-checkmarked out of
+// the valid list. Not required to win, but recognized (and listed) when found.
+let bonusWords = new Set(), foundBonusWords = new Set();
 let wordCanonicalPaths = new Map(); // word -> { startKey, keys: number[] }
 let preloadedWords = null;    // pre-computed word list from Firebase (avoids full dict download)
+let preloadedBonusWords = null; // pre-computed Linguist Bonus list from Firebase
 let gameWordSelections = new Set(); // excluded words loaded from Firebase
 let currentBoardDate = null; // YYYY-MM-DD if showing a daily board, null otherwise
 let answersRevealed = false;
@@ -1019,6 +1070,7 @@ function processDictText(text) {
 // ── Board config (solo daily board) ───────────────────────────────────────
 async function loadBoardConfig() {
     preloadedWords = null;
+    preloadedBonusWords = null;
     currentBoardDate = null;
     try {
         if (db) {
@@ -1029,6 +1081,7 @@ async function loadBoardConfig() {
                 const cfg = dailySnap.val();
                 boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
                 if (cfg.words?.length) preloadedWords = new Set(cfg.words);
+                if (cfg.bonusWords?.length) preloadedBonusWords = new Set(cfg.bonusWords);
                 currentBoardDate = today;
                 return;
             }
@@ -1038,6 +1091,7 @@ async function loadBoardConfig() {
             if (cfg) {
                 boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
                 if (cfg.words?.length) preloadedWords = new Set(cfg.words);
+                if (cfg.bonusWords?.length) preloadedBonusWords = new Set(cfg.bonusWords);
                 return;
             }
         }
@@ -1048,6 +1102,7 @@ async function loadBoardConfig() {
         const cfg = await res.json();
         boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
         if (cfg.words?.length) preloadedWords = new Set(cfg.words);
+        if (cfg.bonusWords?.length) preloadedBonusWords = new Set(cfg.bonusWords);
     } catch {
         const b = generateBoard(3, 3, Math.random);
         boardRows = b.rows; boardCols = b.cols; boardCells = b.cells;
@@ -1064,13 +1119,17 @@ function saveProgress() {
     const h = getBoardHash();
     const won = validWords.size > 0 && foundWords.size >= validWords.size;
     localStorage.setItem(`G2_found_${h}`, JSON.stringify([...foundWords]));
+    localStorage.setItem(`G2_bonus_found_${h}`, JSON.stringify([...foundBonusWords]));
     localStorage.setItem(`G2_timer_${h}`, JSON.stringify({ s: timerSeconds, started: timerStarted, paused: timerPaused, won }));
     if (answersRevealed) localStorage.setItem(`G2_answers_${h}`, '1');
+    if (hintRevealUsed) localStorage.setItem(`G2_hint_reveal_${h}`, '1');
 }
 function loadProgress() {
     const h = getBoardHash();
     foundWords = new Set(JSON.parse(localStorage.getItem(`G2_found_${h}`) || '[]'));
+    foundBonusWords = new Set(JSON.parse(localStorage.getItem(`G2_bonus_found_${h}`) || '[]'));
     answersRevealed = localStorage.getItem(`G2_answers_${h}`) === '1';
+    hintRevealUsed = localStorage.getItem(`G2_hint_reveal_${h}`) === '1';
     const saved = JSON.parse(localStorage.getItem(`G2_timer_${h}`) || '{}');
     timerSeconds = saved.s || 0;
     updateTimerDisplay();
@@ -1246,12 +1305,15 @@ async function loadDailyBoard(date) {
         if (!cfg) return;
         boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
         preloadedWords = cfg.words?.length ? new Set(cfg.words) : null;
+        preloadedBonusWords = cfg.bonusWords?.length ? new Set(cfg.bonusWords) : null;
         currentBoardDate = date;
 
         if (!preloadedWords && !dictionary.size) await loadDictionary();
 
         answersRevealed = false;
+        hintRevealUsed = false;
         foundWords = new Set();
+        foundBonusWords = new Set();
         loadProgress();
         calculateValidWords();
         localStorage.setItem(`G2_total_${getBoardHash()}`, validWords.size);
@@ -1501,7 +1563,7 @@ function startSelection(r, c) {
     if (!roomMode) startTimer();
     const p = document.getElementById('word-preview');
     clearTimeout(p._fadeTimer);
-    p.classList.remove('found','already','error','small','settling');
+    p.classList.remove('found','already','bonus','error','small','settling');
     p.style.transition = ''; p.style.opacity = '';
     updatePathUI();
 }
@@ -1524,7 +1586,7 @@ function endSelection() {
 
     const preview = document.getElementById('word-preview');
     clearTimeout(preview._fadeTimer);
-    preview.classList.remove('found','already','error','small','settling');
+    preview.classList.remove('found','already','bonus','error','small','settling');
     preview.style.transition = ''; preview.style.opacity = '1';
 
     if (word.length >= 4) {
@@ -1547,6 +1609,22 @@ function endSelection() {
                     requestAnimationFrame(() => { preview.style.opacity = '0.5'; });
                 }, 1000);
             }
+        } else if (bonusWords.has(word)) {
+            // Linguist Bonus — a valid English word the curator pruned from this
+            // board's list. Acknowledge it (grey), but it doesn't affect score.
+            const alreadyBonus = foundBonusWords.has(word);
+            if (!alreadyBonus) {
+                foundBonusWords.add(word);
+                if (!roomMode) saveProgress();
+            }
+            preview.textContent = alreadyBonus ? 'Already found (linguist bonus)' : 'Linguist Bonus Word!';
+            preview.classList.add('bonus','small');
+            preview._fadeTimer = setTimeout(() => {
+                preview.textContent = word;
+                preview.classList.remove('small');
+                preview.classList.add('settling');
+                requestAnimationFrame(() => { preview.style.opacity = '0.5'; });
+            }, 1000);
         } else {
             preview.textContent = 'Invalid word';
             preview.classList.add('error','small');
@@ -1613,7 +1691,7 @@ function clearPathUI() {
     currentPath = [];
     const preview = document.getElementById('word-preview');
     clearTimeout(preview._fadeTimer);
-    preview.classList.remove('found','already','error','small','settling');
+    preview.classList.remove('found','already','bonus','error','small','settling');
     preview.style.transition=''; preview.style.opacity=''; preview.textContent='';
     for (let r=0;r<boardRows;r++) for(let c=0;c<boardCols;c++) cellElements[r]?.[c]?.classList.remove('active');
     const svg=document.getElementById('svg-overlay');
@@ -1810,15 +1888,210 @@ function renderAnswerList(container) {
         });
         list.appendChild(chips);
     });
+    // ── Linguist Bonuses ── all bonus words, alphabetically ────────────────────
+    if (bonusWords.size) {
+        const bonusTitle = document.createElement('div');
+        bonusTitle.className = 'answer-list-title';
+        bonusTitle.style.marginTop = '12px';
+        bonusTitle.textContent = 'Linguist Bonuses';
+        list.appendChild(bonusTitle);
+        const bonusChips = document.createElement('div');
+        bonusChips.className = 'answer-chips';
+        [...bonusWords].sort().forEach(w => {
+            const chip = document.createElement('span');
+            chip.className = 'answer-chip' + (foundBonusWords.has(w) ? ' found' : '');
+            chip.textContent = w;
+            bonusChips.appendChild(chip);
+        });
+        list.appendChild(bonusChips);
+    }
     container.appendChild(list);
 }
 
 // ── Word popup ─────────────────────────────────────────────────────────────
+// Which view the Found dialog uses: 'len' (grouped by length, default),
+// 'abc' (all found words alphabetically), 'time' (in order they were found).
+let popupView = 'len';
+
+// Hint panel state. hintScreen: null (normal popup), 'menu', 'reveal',
+// 'alpha' (order alphabetical), 'first' (show first letter).
+// `hintRevealUsed` greys out the one-shot "Reveal Word" option for this board.
+let hintScreen = null;
+let hintRevealUsed = false;
+
 function togglePopup(e) {
     e.stopPropagation();
     const popup = document.getElementById('word-popup');
     if (popup.style.display !== 'none') { popup.style.display='none'; return; }
+    hintScreen = null; // always open on the normal Found view
+    renderPopup();
+    popup.style.display='block';
+}
 
+function renderPopup() {
+    const popup = document.getElementById('word-popup');
+    popup.innerHTML='';
+
+    // Hint screens replace the normal Found view entirely (solo only).
+    if (!roomMode && hintScreen) { renderHintScreen(popup); return; }
+
+    // ── View toggle buttons ───────────────────────────────────────────────────
+    const views = document.createElement('div'); views.className='popup-views';
+    [['len','#'],['abc','ABC'],['time','🕐']].forEach(([mode,label]) => {
+        const btn=document.createElement('button');
+        btn.className='popup-view-btn'+(popupView===mode?' active':'');
+        btn.textContent=label;
+        btn.onclick=(ev)=>{ ev.stopPropagation(); popupView=mode; renderPopup(); };
+        views.appendChild(btn);
+    });
+    popup.appendChild(views);
+
+    if (popupView === 'len') renderPopupByLength(popup);
+    else                     renderPopupFlat(popup);
+
+    if (!roomMode) {
+        // ── Hint entry button — at the very bottom of the Found list (no hints in VS) ──
+        const hb=document.createElement('button'); hb.className='popup-hint-btn'; hb.textContent='💡 Hint';
+        hb.onclick=(ev)=>{ ev.stopPropagation(); hintScreen='menu'; renderPopup(); };
+        popup.appendChild(hb);
+
+        const rb=document.createElement('button'); rb.className='popup-reset'; rb.textContent='Reset Progress';
+        rb.onclick=()=>{resetProgress();popup.style.display='none';};
+        popup.appendChild(rb);
+    }
+}
+
+// ── Hint panel ──────────────────────────────────────────────────────────────
+// Three hints, all derived from validWords / foundWords. Never shown in roomMode.
+function renderHintScreen(popup) {
+    const back = (target) => {
+        const b=document.createElement('button'); b.className='hint-back-btn';
+        b.textContent = target ? '‹ Back' : '‹ Back to words';
+        b.onclick=(ev)=>{ ev.stopPropagation(); hintScreen=target; renderPopup(); };
+        popup.appendChild(b);
+    };
+
+    if (hintScreen === 'menu') {
+        back(null);
+        const title=document.createElement('div'); title.className='hint-title'; title.textContent='Hints'; popup.appendChild(title);
+
+        const reveal=document.createElement('button'); reveal.className='hint-option';
+        reveal.textContent='Reveal Word';
+        reveal.disabled = hintRevealUsed;
+        if (hintRevealUsed) reveal.textContent='Reveal Word (used)';
+        reveal.onclick=(ev)=>{ ev.stopPropagation(); if(hintRevealUsed) return; hintScreen='reveal'; renderPopup(); };
+        popup.appendChild(reveal);
+
+        const alpha=document.createElement('button'); alpha.className='hint-option';
+        alpha.textContent='Order Alphabetical';
+        alpha.onclick=(ev)=>{ ev.stopPropagation(); hintScreen='alpha'; renderPopup(); };
+        popup.appendChild(alpha);
+
+        const first=document.createElement('button'); first.className='hint-option';
+        first.textContent='Show First';
+        first.onclick=(ev)=>{ ev.stopPropagation(); hintScreen='first'; renderPopup(); };
+        popup.appendChild(first);
+        return;
+    }
+
+    if (hintScreen === 'reveal') { renderHintReveal(popup, back); return; }
+    if (hintScreen === 'alpha')  { renderHintList(popup, back, false); return; }
+    if (hintScreen === 'first')  { renderHintList(popup, back, true);  return; }
+}
+
+// "Reveal Word" — one button per remaining word-length; clicking reveals a random
+// unfound word of that length (shown green in the preview, as if just found).
+function renderHintReveal(popup, back) {
+    back('menu');
+    const title=document.createElement('div'); title.className='hint-title'; title.textContent='Reveal a Word'; popup.appendChild(title);
+
+    // Remaining word lengths that still have an unfound word.
+    const lengths = [...new Set([...validWords].filter(w => !foundWords.has(w)).map(w => w.length))].sort((a,b)=>a-b);
+    if (!lengths.length) {
+        const none=document.createElement('div'); none.className='hint-note'; none.textContent='All words found!'; popup.appendChild(none);
+        return;
+    }
+    const note=document.createElement('div'); note.className='hint-note';
+    note.textContent='Pick a length — one random word is revealed. One use per puzzle.';
+    popup.appendChild(note);
+    const row=document.createElement('div'); row.style.cssText='padding-top:8px';
+    lengths.forEach(len => {
+        const b=document.createElement('button'); b.className='hint-len-btn';
+        b.textContent=`${len} letter word`;
+        b.onclick=(ev)=>{ ev.stopPropagation(); revealHintWord(len); };
+        row.appendChild(b);
+    });
+    popup.appendChild(row);
+}
+
+// Reveal one random unfound word of the given length: add it to found, show it
+// green in the preview, mark the one-shot hint as used, and close the popup.
+function revealHintWord(len) {
+    if (hintRevealUsed) return;
+    const candidates = [...validWords].filter(w => w.length === len && !foundWords.has(w));
+    if (!candidates.length) return;
+    const word = candidates[Math.floor(Math.random() * candidates.length)];
+
+    foundWords.add(word);
+    hintRevealUsed = true;
+    if (!roomMode) startTimer(); // make sure the timer is running like a normal find
+    saveProgress();
+    updateScoreUI();
+    updateTileHints();
+
+    // Show it in the preview exactly like a freshly found word (green, settling).
+    const preview = document.getElementById('word-preview');
+    clearTimeout(preview._fadeTimer);
+    preview.classList.remove('found','already','bonus','error','small','settling');
+    preview.style.transition=''; preview.style.opacity='1';
+    preview.textContent = word;
+    preview.classList.add('found','settling');
+    requestAnimationFrame(() => { preview.style.opacity = '0.5'; });
+
+    hintScreen = null;
+    document.getElementById('word-popup').style.display='none';
+}
+
+// "Order Alphabetical" / "Show First": for each word length, list all words
+// alphabetically, found words spelled out, unfound shown as **** (alpha) or
+// first-letter + *** (first). Mirrors the per-length grouping of the Found view.
+function renderHintList(popup, back, showFirst) {
+    back('menu');
+    const title=document.createElement('div'); title.className='hint-title';
+    title.textContent = showFirst ? 'Show First Letter' : 'Alphabetical';
+    popup.appendChild(title);
+
+    const groups = {};
+    for (const w of validWords) { (groups[w.length] = groups[w.length] || []).push(w); }
+    const keys = Object.keys(groups).sort((a,b)=>a-b);
+    if (!keys.length) {
+        const none=document.createElement('div'); none.className='hint-note'; none.textContent='No words on this board.'; popup.appendChild(none);
+        return;
+    }
+    keys.forEach(len => {
+        const words = groups[len].sort();
+        const found = words.filter(w => foundWords.has(w)).length;
+        const sec=document.createElement('div'); sec.className='popup-section';
+        const row=document.createElement('div'); row.className='popup-row';
+        row.innerHTML=`<span class="popup-label">${len}-letter words</span><span class="popup-count">${found} / ${words.length}</span>`;
+        sec.appendChild(row);
+        const list=document.createElement('div'); list.className='hint-reveal-row';
+        words.forEach(w => {
+            const chip=document.createElement('span'); chip.className='hint-reveal-chip';
+            if (foundWords.has(w)) { chip.classList.add('found'); chip.textContent=w; }
+            else {
+                chip.classList.add('missing');
+                chip.textContent = showFirst ? w[0] + '*'.repeat(w.length-1) : '*'.repeat(w.length);
+            }
+            list.appendChild(chip);
+        });
+        sec.appendChild(list);
+        popup.appendChild(sec);
+    });
+}
+
+// Default view: words grouped by letter count, with per-length counts.
+function renderPopupByLength(popup) {
     const myWords = roomMode ? roomFoundWords : foundWords;
     const groups  = {};
     for (const w of validWords) {
@@ -1826,10 +2099,12 @@ function togglePopup(e) {
         groups[w.length].total++;
         if (myWords.has(w)) groups[w.length].found++;
     }
-    popup.innerHTML='';
     const keys = Object.keys(groups).sort((a,b)=>a-b);
     if (!keys.length) {
-        popup.innerHTML='<div style="color:var(--text-muted);font-size:.9rem;padding:4px 0">No words yet.</div>';
+        const empty=document.createElement('div');
+        empty.style.cssText='color:var(--text-muted);font-size:.9rem;padding:4px 0';
+        empty.textContent='No words yet.';
+        popup.appendChild(empty);
     } else {
         keys.forEach(len => {
             const {total,found:fc} = groups[len];
@@ -1852,12 +2127,46 @@ function togglePopup(e) {
             popup.appendChild(sec);
         });
     }
-    if (!roomMode) {
-        const rb=document.createElement('button'); rb.className='popup-reset'; rb.textContent='Reset Progress';
-        rb.onclick=()=>{resetProgress();popup.style.display='none';};
-        popup.appendChild(rb);
+    appendBonusSection(popup, b => [...b].sort());
+}
+
+// 'abc' and 'time' views: a single flat list of found words.
+// abc → alphabetical; time → insertion order of the found Set (order found).
+function renderPopupFlat(popup) {
+    const myWords = roomMode ? roomFoundWords : foundWords;
+    let words = [...myWords].filter(w => validWords.has(w));
+    if (popupView === 'abc') words = words.sort();
+    const sec=document.createElement('div'); sec.className='popup-section';
+    const row=document.createElement('div'); row.className='popup-row';
+    row.innerHTML=`<span class="popup-label">Found</span><span class="popup-count">${words.length} / ${validWords.size}</span>`;
+    sec.appendChild(row);
+    if (words.length) {
+        const wl=document.createElement('div'); wl.className='popup-words';
+        words.forEach(w=>{const chip=document.createElement('span');chip.className='popup-chip';chip.textContent=w;wl.appendChild(chip);});
+        sec.appendChild(wl);
+    } else {
+        const empty=document.createElement('div'); empty.className='popup-remaining';
+        empty.textContent='No words yet.';
+        sec.appendChild(empty);
     }
-    popup.style.display='block';
+    popup.appendChild(sec);
+    // Same bonus list — alphabetical for abc, order-found for time.
+    appendBonusSection(popup, b => popupView === 'abc' ? b.sort() : b);
+}
+
+// ── Linguist Bonuses ──────────────────────────────────────────────────────
+// Found bonus words. `order` decides how they're sorted for the current view.
+function appendBonusSection(popup, order) {
+    const foundBonus = order([...foundBonusWords].filter(w => bonusWords.has(w)));
+    if (!foundBonus.length) return;
+    const sec = document.createElement('div'); sec.className='popup-section';
+    const hdr = document.createElement('div'); hdr.className='popup-row';
+    hdr.innerHTML = '<span class="popup-label">Linguist Bonuses</span>';
+    sec.appendChild(hdr);
+    const wl = document.createElement('div'); wl.className='popup-words';
+    foundBonus.forEach(w => { const chip=document.createElement('span'); chip.className='popup-chip'; chip.textContent=w; wl.appendChild(chip); });
+    sec.appendChild(wl);
+    popup.appendChild(sec);
 }
 
 // ── Word validity ──────────────────────────────────────────────────────────
@@ -1874,8 +2183,10 @@ function canSpellOnBoard(word) {
 }
 function calculateValidWords() {
     validWords.clear();
+    bonusWords.clear();
     if (preloadedWords) {
         for (const word of preloadedWords) validWords.add(word);
+        if (preloadedBonusWords) for (const word of preloadedBonusWords) bonusWords.add(word);
         _buildCanonicalPaths();
         updateScoreUI();
         return;
@@ -1883,10 +2194,12 @@ function calculateValidWords() {
     const ls=new Set();
     for(let r=0;r<boardRows;r++) for(let c=0;c<boardCols;c++) if(boardCells[r]?.[c]) ls.add(boardCells[r][c]);
     for(const word of dictionary) {
-        if(gameWordSelections.has(word)) continue;
         let ok=true;
         for(const ch of word) if(!ls.has(ch)){ok=false;break;}
-        if(ok&&canSpellOnBoard(word)) validWords.add(word);
+        if(!ok||!canSpellOnBoard(word)) continue;
+        // Red-checkmarked words become Linguist Bonuses; everything else is valid.
+        if (gameWordSelections.has(word)) bonusWords.add(word);
+        else validWords.add(word);
     }
     _buildCanonicalPaths();
     updateScoreUI();
@@ -1895,8 +2208,12 @@ function calculateValidWords() {
 // ── Solo reset ─────────────────────────────────────────────────────────────
 function resetProgress() {
     foundWords.clear();
+    foundBonusWords.clear();
     resetTimer();
+    hintRevealUsed = false;
+    hintScreen = null;
     localStorage.removeItem('G2_share_time');
+    localStorage.removeItem(`G2_hint_reveal_${getBoardHash()}`);
     saveProgress();
     updateScoreUI();
     clearPathUI();

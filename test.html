@@ -117,6 +117,7 @@
         }
         .current-word.found    { color: #22c55e; }
         .current-word.already  { color: #94a3b8; }
+        .current-word.bonus    { color: #94a3b8; }
         .current-word.error    { color: var(--error); }
         .current-word.small    { font-size: 1.1rem; }
         .current-word.settling { transition: opacity 0.6s ease; }
@@ -442,8 +443,12 @@ try {
 const DICT_CACHE_KEY = 'G2_dict_v3';
 let boardRows = 5, boardCols = 5, boardCells = [], cellElements = [];
 let dictionary = new Set(), validWords = new Set(), foundWords = new Set();
+// "Linguist Bonus" words: board-spellable words that were red-checkmarked out of
+// the valid list. Not required to win, but recognized (and listed) when found.
+let bonusWords = new Set(), foundBonusWords = new Set();
 let wordCanonicalPaths = new Map(); // word -> { startKey, keys: number[] }
 let preloadedWords = null;    // pre-computed word list from Firebase (avoids full dict download)
+let preloadedBonusWords = null; // pre-computed Linguist Bonus list
 let gameWordSelections = new Set(); // excluded words loaded from Firebase
 let isSelecting = false, currentPath = [];
 let timerStarted = false, timerSeconds = 0, timerInterval = null, timerPaused = false;
@@ -924,6 +929,7 @@ function processDictText(text) {
 // ── Board config (solo daily board) ───────────────────────────────────────
 async function loadBoardConfig() {
     preloadedWords = null;
+    preloadedBonusWords = null;
     const saved = localStorage.getItem('G2_test_board');
     if (saved) {
         try {
@@ -931,6 +937,22 @@ async function loadBoardConfig() {
             boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
             const selSaved = localStorage.getItem('G2_test_word_sel');
             if (selSaved) gameWordSelections = new Set(JSON.parse(selSaved));
+            // Editor hands over the exact word list (custom adds + per-puzzle removals).
+            const wordsSaved = localStorage.getItem('G2_test_words');
+            if (wordsSaved) {
+                try {
+                    const list = JSON.parse(wordsSaved);
+                    if (Array.isArray(list) && list.length) preloadedWords = list;
+                } catch {}
+            }
+            // …and the red-checkmarked Linguist Bonus words for this board.
+            const bonusSaved = localStorage.getItem('G2_test_bonus_words');
+            if (bonusSaved) {
+                try {
+                    const list = JSON.parse(bonusSaved);
+                    if (Array.isArray(list) && list.length) preloadedBonusWords = list;
+                } catch {}
+            }
             return;
         } catch {}
     }
@@ -945,11 +967,13 @@ function getBoardHash() { return 'test_' + boardCells.flat().map(c => c||'_').jo
 function saveProgress() {
     const h = getBoardHash();
     localStorage.setItem(`G2_found_${h}`, JSON.stringify([...foundWords]));
+    localStorage.setItem(`G2_bonus_found_${h}`, JSON.stringify([...foundBonusWords]));
     localStorage.setItem(`G2_timer_${h}`, JSON.stringify({ s: timerSeconds, started: timerStarted, paused: timerPaused }));
 }
 function loadProgress() {
     const h = getBoardHash();
     foundWords = new Set(JSON.parse(localStorage.getItem(`G2_found_${h}`) || '[]'));
+    foundBonusWords = new Set(JSON.parse(localStorage.getItem(`G2_bonus_found_${h}`) || '[]'));
     const saved = JSON.parse(localStorage.getItem(`G2_timer_${h}`) || '{}');
     timerSeconds = saved.s || 0;
     updateTimerDisplay();
@@ -1162,7 +1186,7 @@ function startSelection(r, c) {
     if (!roomMode) startTimer();
     const p = document.getElementById('word-preview');
     clearTimeout(p._fadeTimer);
-    p.classList.remove('found','already','error','small','settling');
+    p.classList.remove('found','already','bonus','error','small','settling');
     p.style.transition = ''; p.style.opacity = '';
     updatePathUI();
 }
@@ -1185,7 +1209,7 @@ function endSelection() {
 
     const preview = document.getElementById('word-preview');
     clearTimeout(preview._fadeTimer);
-    preview.classList.remove('found','already','error','small','settling');
+    preview.classList.remove('found','already','bonus','error','small','settling');
     preview.style.transition = ''; preview.style.opacity = '1';
 
     if (word.length >= 4) {
@@ -1208,6 +1232,22 @@ function endSelection() {
                     requestAnimationFrame(() => { preview.style.opacity = '0.5'; });
                 }, 1000);
             }
+        } else if (bonusWords.has(word)) {
+            // Linguist Bonus — a valid English word the curator pruned from this
+            // board's list. Acknowledge it (grey), but it doesn't affect score.
+            const alreadyBonus = foundBonusWords.has(word);
+            if (!alreadyBonus) {
+                foundBonusWords.add(word);
+                if (!roomMode) saveProgress();
+            }
+            preview.textContent = alreadyBonus ? 'Already found (linguist bonus)' : 'Linguist Bonus Word!';
+            preview.classList.add('bonus','small');
+            preview._fadeTimer = setTimeout(() => {
+                preview.textContent = word;
+                preview.classList.remove('small');
+                preview.classList.add('settling');
+                requestAnimationFrame(() => { preview.style.opacity = '0.5'; });
+            }, 1000);
         } else {
             preview.textContent = 'Invalid word';
             preview.classList.add('error','small');
@@ -1274,7 +1314,7 @@ function clearPathUI() {
     currentPath = [];
     const preview = document.getElementById('word-preview');
     clearTimeout(preview._fadeTimer);
-    preview.classList.remove('found','already','error','small','settling');
+    preview.classList.remove('found','already','bonus','error','small','settling');
     preview.style.transition=''; preview.style.opacity=''; preview.textContent='';
     for (let r=0;r<boardRows;r++) for(let c=0;c<boardCols;c++) cellElements[r]?.[c]?.classList.remove('active');
     const svg=document.getElementById('svg-overlay');
@@ -1449,6 +1489,19 @@ function togglePopup(e) {
             popup.appendChild(sec);
         });
     }
+    // ── Linguist Bonuses ──────────────────────────────────────────────────────
+    // Found red-checkmarked words, listed alphabetically. No total shown.
+    const foundBonus = [...foundBonusWords].filter(w => bonusWords.has(w)).sort();
+    if (foundBonus.length) {
+        const sec = document.createElement('div'); sec.className='popup-section';
+        const hdr = document.createElement('div'); hdr.className='popup-row';
+        hdr.innerHTML = '<span class="popup-label">Linguist Bonuses</span>';
+        sec.appendChild(hdr);
+        const wl = document.createElement('div'); wl.className='popup-words';
+        foundBonus.forEach(w => { const chip=document.createElement('span'); chip.className='popup-chip'; chip.textContent=w; wl.appendChild(chip); });
+        sec.appendChild(wl);
+        popup.appendChild(sec);
+    }
     if (!roomMode) {
         const rb=document.createElement('button'); rb.className='popup-reset'; rb.textContent='Reset Progress';
         rb.onclick=()=>{resetProgress();popup.style.display='none';};
@@ -1471,8 +1524,10 @@ function canSpellOnBoard(word) {
 }
 function calculateValidWords() {
     validWords.clear();
+    bonusWords.clear();
     if (preloadedWords) {
         for (const word of preloadedWords) validWords.add(word);
+        if (preloadedBonusWords) for (const word of preloadedBonusWords) bonusWords.add(word);
         _buildCanonicalPaths();
         updateScoreUI();
         return;
@@ -1480,10 +1535,12 @@ function calculateValidWords() {
     const ls=new Set();
     for(let r=0;r<boardRows;r++) for(let c=0;c<boardCols;c++) if(boardCells[r]?.[c]) ls.add(boardCells[r][c]);
     for(const word of dictionary) {
-        if(gameWordSelections.has(word)) continue;
         let ok=true;
         for(const ch of word) if(!ls.has(ch)){ok=false;break;}
-        if(ok&&canSpellOnBoard(word)) validWords.add(word);
+        if(!ok||!canSpellOnBoard(word)) continue;
+        // Red-checkmarked words become Linguist Bonuses; everything else is valid.
+        if (gameWordSelections.has(word)) bonusWords.add(word);
+        else validWords.add(word);
     }
     _buildCanonicalPaths();
     updateScoreUI();
@@ -1492,6 +1549,7 @@ function calculateValidWords() {
 // ── Solo reset ─────────────────────────────────────────────────────────────
 function resetProgress() {
     foundWords.clear();
+    foundBonusWords.clear();
     resetTimer();
     localStorage.removeItem('G2_share_time');
     saveProgress();

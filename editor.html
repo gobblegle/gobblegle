@@ -122,12 +122,12 @@
         .word-chip  { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text); }
 
         /* ── Word-select modal ── */
-        #word-select-modal {
+        #word-select-modal, .ws-modal-shell {
             display: none; position: fixed; inset: 0;
             background: rgba(0,0,0,0.45); z-index: 1000;
             align-items: center; justify-content: center;
         }
-        #word-select-modal.open { display: flex; }
+        #word-select-modal.open, .ws-modal-shell.open { display: flex; }
         .ws-panel {
             background: var(--surface); border-radius: 14px;
             width: 92%; max-width: 460px; max-height: 82vh;
@@ -172,6 +172,18 @@
             display: flex; gap: 8px; justify-content: flex-end; align-items: center;
         }
         .ws-footer-note { flex: 1; font-size: 0.75rem; color: var(--text-muted); }
+
+        /* Custom (puzzle-only) words shown in blue across all lists */
+        .ws-word.is-custom { color: #2563eb; }
+        .word-chip.is-custom { color: #2563eb; }
+        .ws-custom-badge {
+            font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
+            letter-spacing: 0.05em; color: #2563eb; border: 1px solid #93c5fd;
+            border-radius: 4px; padding: 1px 4px; margin-left: 6px;
+        }
+        /* Blue ✕ remove button for the customize-puzzle list */
+        .ws-btn-blue { border-color: #bfdbfe; color: #bfdbfe; }
+        .ws-btn-blue.active { border-color: #2563eb; background: #2563eb; color: #fff; }
     </style>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
@@ -220,6 +232,8 @@
             <button class="btn btn-sec" onclick="fillRandom()">Fill Random</button>
             <button class="btn btn-sec" onclick="clearAll()">Clear</button>
             <button class="btn btn-sec" onclick="openWordSelect()">Select Words</button>
+            <button class="btn btn-sec" onclick="openDictEdit()">Add/Remove Words</button>
+            <button class="btn btn-sec" onclick="openPuzzleCustomize()">Customize This Puzzle</button>
             <button class="btn btn-sec" onclick="testBoard()">Test</button>
         </div>
         <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
@@ -270,6 +284,59 @@
     </div>
 </div>
 
+<!-- Add/Remove Words modal (general dictionary update) -->
+<div id="dict-edit-modal" class="ws-modal-shell">
+    <div class="ws-panel">
+        <div class="ws-header">
+            <span>Add / Remove Words</span>
+            <button class="btn btn-sec" style="padding:4px 10px;font-size:0.82rem" onclick="closeDictEdit()">✕</button>
+        </div>
+        <div class="ws-col-labels">
+            <span>Word</span>
+            <span style="width:28px;text-align:center;color:#16a34a">✓</span>
+            <span style="width:28px;text-align:center;color:#dc2626">✕</span>
+        </div>
+        <div class="ws-body" id="dict-edit-body"></div>
+        <div class="ws-add">
+            <input type="text" id="dict-edit-input" class="field-input" placeholder="Type a word…"
+                   autocomplete="off" spellcheck="false"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();dictEditAddWord();}">
+            <button class="btn" style="padding:9px 16px" onclick="dictEditAddWord()">Add</button>
+        </div>
+        <div class="ws-footer">
+            <span class="ws-footer-note">Dictionary-wide · ✓ approved &nbsp;·&nbsp; ✕ excluded everywhere</span>
+            <button class="btn" onclick="closeDictEdit()">Done</button>
+        </div>
+    </div>
+</div>
+
+<!-- Customize This Puzzle modal (per-board word list only) -->
+<div id="puzzle-custom-modal" class="ws-modal-shell">
+    <div class="ws-panel">
+        <div class="ws-header">
+            <span>Customize This Puzzle</span>
+            <button class="btn btn-sec" style="padding:4px 10px;font-size:0.82rem" onclick="closePuzzleCustomize()">✕</button>
+        </div>
+        <div class="ws-col-labels">
+            <span>Word</span>
+            <span style="width:28px;text-align:center;color:#16a34a">✓</span>
+            <span style="width:28px;text-align:center;color:#dc2626">✕</span>
+        </div>
+        <div class="ws-body" id="puzzle-custom-body"></div>
+        <div id="puzzle-custom-msg" style="display:none;padding:6px 18px 0;font-size:0.78rem;color:var(--error);font-weight:600"></div>
+        <div class="ws-add">
+            <input type="text" id="puzzle-custom-input" class="field-input" placeholder="Add a word for this puzzle only…"
+                   autocomplete="off" spellcheck="false"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();puzzleCustomAddWord();}">
+            <button class="btn" style="padding:9px 16px" onclick="puzzleCustomAddWord()">Add</button>
+        </div>
+        <div class="ws-footer">
+            <span class="ws-footer-note">This board only · <span style="color:#2563eb;font-weight:700">blue</span> = custom · ✕ removes from this puzzle</span>
+            <button class="btn" onclick="closePuzzleCustomize()">Done</button>
+        </div>
+    </div>
+</div>
+
 <script>
 let editorRows = 5, editorCols = 5;
 
@@ -293,7 +360,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (db) {
             const snap = await db.ref('boardConfig').once('value');
             const cfg = snap.val();
-            if (cfg) { editorRows = cfg.rows; editorCols = cfg.cols; buildEditorTable(false, cfg.cells); scheduleWordCount(); return; }
+            if (cfg) { editorRows = cfg.rows; editorCols = cfg.cols; _resetPuzzleCustomizations(cfg); buildEditorTable(false, cfg.cells); scheduleWordCount(); return; }
         }
     } catch {}
     try {
@@ -301,6 +368,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (res.ok) {
             const cfg = await res.json();
             editorRows = cfg.rows; editorCols = cfg.cols;
+            _resetPuzzleCustomizations(cfg);
             buildEditorTable(false, cfg.cells);
             scheduleWordCount();
             return;
@@ -404,6 +472,8 @@ async function selectCalendarDay(dateStr, hasBoard) {
         await _loadDailyBoardIntoEditor(dateStr);
     } else {
         editorRows = 3; editorCols = 3;
+        _edAddedWords = [];
+        _resetPuzzleCustomizations(null);
         buildEditorTable(false, null);
         scheduleWordCount();
         showStatus(`New board for ${dateStr} — add letters and Save Board.`, 'info');
@@ -419,6 +489,8 @@ async function _loadDailyBoardIntoEditor(dateStr) {
         const cfg = snap.val();
         if (!cfg) { showStatus(`No board found for ${dateStr}.`, 'err'); return; }
         editorRows = cfg.rows; editorCols = cfg.cols;
+        _edAddedWords = [];
+        _resetPuzzleCustomizations(cfg);
         buildEditorTable(false, cfg.cells);
         scheduleWordCount();
         showStatus(`Loaded ${dateStr}. Edit and Save Board to update it.`, 'ok');
@@ -443,8 +515,15 @@ async function saveBoard() {
     showStatus('Saving…', 'info');
     try {
         const payload = { rows: editorRows, cols: editorCols, cells };
-        const activeWords = _edCurrentWords.filter(w => !edWordSelections.has(w));
+        const activeWords = _edActivePuzzleWords();
         if (activeWords.length) payload.words = activeWords;
+        // Red-checkmarked board words → "Linguist Bonus" list for the game.
+        const bonusWords = _edBonusPuzzleWords();
+        if (bonusWords.length) payload.bonusWords = bonusWords;
+        // Persist per-puzzle customizations so this date restores exactly.
+        if (_edPuzzleRemoved.size)  payload.puzzleRemoved  = [..._edPuzzleRemoved];
+        if (_edPuzzleIncluded.size) payload.puzzleIncluded = [..._edPuzzleIncluded];
+        if (_edPuzzleCustom.length) payload.puzzleCustom   = _edPuzzleCustom.slice();
         await db.ref(`dailyBoards/${edSelectedDate}`).set(payload);
         await db.ref(`dailyBoardDates/${edSelectedDate}`).set(true);
         if (edAvailDates) edAvailDates[edSelectedDate] = true; // update local cache
@@ -465,6 +544,10 @@ function testBoard() {
     }
     localStorage.setItem('G2_test_board', JSON.stringify({ rows: editorRows, cols: editorCols, cells }));
     localStorage.setItem('G2_test_word_sel', JSON.stringify([...edWordSelections]));
+    // Hand the test page the exact word list (custom adds + per-puzzle removals applied).
+    localStorage.setItem('G2_test_words', JSON.stringify(_edActivePuzzleWords()));
+    // …and the red-checkmarked "Linguist Bonus" words for this board.
+    localStorage.setItem('G2_test_bonus_words', JSON.stringify(_edBonusPuzzleWords()));
     window.open('./test.html', '_blank');
 }
 
@@ -698,7 +781,13 @@ function renderWordSelectList() {
         row.className = 'ws-row';
 
         const wspan = document.createElement('span');
-        wspan.className = 'ws-word'; wspan.textContent = word;
+        wspan.className = 'ws-word' + (_isCustomWord(word) ? ' is-custom' : '');
+        wspan.textContent = word;
+        if (_isCustomWord(word)) {
+            const badge = document.createElement('span');
+            badge.className = 'ws-custom-badge'; badge.textContent = 'custom';
+            wspan.appendChild(badge);
+        }
 
         const gbtn = document.createElement('button');
         gbtn.className = 'ws-btn ws-btn-green' + (edWordApprovals.has(word) ? ' active' : '');
@@ -723,6 +812,198 @@ function renderWordSelectList() {
                 await _toggleWordAppr(word); // unselect green
                 gbtn.className = 'ws-btn ws-btn-green';
             }
+        };
+
+        row.appendChild(wspan); row.appendChild(gbtn); row.appendChild(rbtn);
+        body.appendChild(row);
+    }
+}
+
+// ── Add/Remove Words — general DICTIONARY editing ───────────────────────────
+// Words typed into this dialog, in entry order (most-recent first when shown).
+let _dictEditWords = [];
+
+function openDictEdit() {
+    renderDictEditList();
+    document.getElementById('dict-edit-modal').classList.add('open');
+    setTimeout(() => document.getElementById('dict-edit-input').focus(), 0);
+}
+function closeDictEdit() {
+    document.getElementById('dict-edit-modal').classList.remove('open');
+    // Dictionary state changed — refresh the active setup puzzle's word count.
+    updateWordCount();
+}
+
+function dictEditAddWord() {
+    const input = document.getElementById('dict-edit-input');
+    const word = (input.value || '').trim().toUpperCase().replace(/[^A-Z]/g, '');
+    input.value = '';
+    if (!word) return;
+    // Bring an already-listed word to the top rather than duplicating it.
+    _dictEditWords = _dictEditWords.filter(w => w !== word);
+    _dictEditWords.unshift(word);
+    renderDictEditList();
+}
+
+function renderDictEditList() {
+    const body = document.getElementById('dict-edit-body');
+    body.innerHTML = '';
+    if (!_dictEditWords.length) {
+        body.innerHTML = '<div style="padding:16px 18px;font-size:0.82rem;color:var(--text-muted)">Type a word above to review or change its dictionary status.</div>';
+        return;
+    }
+    for (const word of _dictEditWords) {
+        const row = document.createElement('div');
+        row.className = 'ws-row';
+
+        const wspan = document.createElement('span');
+        wspan.className = 'ws-word' + (_isCustomWord(word) ? ' is-custom' : '');
+        wspan.textContent = word;
+        // Flag words not in the base dictionary and not yet approved, so it's
+        // clear that the green ✓ is what adds them.
+        if (edDict && !edDict.has(word) && !edWordApprovals.has(word) && !_isCustomWord(word)) {
+            const badge = document.createElement('span');
+            badge.className = 'ws-custom-badge';
+            badge.style.color = 'var(--text-muted)'; badge.style.borderColor = 'var(--border)';
+            badge.textContent = 'not in dict';
+            wspan.appendChild(badge);
+        }
+
+        const gbtn = document.createElement('button');
+        gbtn.className = 'ws-btn ws-btn-green' + (edWordApprovals.has(word) ? ' active' : '');
+        gbtn.innerHTML = '✓';
+
+        const rbtn = document.createElement('button');
+        rbtn.className = 'ws-btn ws-btn-red' + (edWordSelections.has(word) ? ' active' : '');
+        rbtn.innerHTML = '✕';
+
+        gbtn.onclick = async () => {
+            const nowApproved = await _toggleWordAppr(word);
+            gbtn.className = 'ws-btn ws-btn-green' + (nowApproved ? ' active' : '');
+            // Approving clears any conflicting exclusion. The word becomes valid
+            // wherever the board can spell it (folded in by updateWordCount).
+            if (nowApproved && edWordSelections.has(word)) {
+                await _toggleWordSel(word);
+                rbtn.className = 'ws-btn ws-btn-red';
+            }
+        };
+        rbtn.onclick = async () => {
+            const nowExcluded = await _toggleWordSel(word);
+            rbtn.className = 'ws-btn ws-btn-red' + (nowExcluded ? ' active' : '');
+            if (nowExcluded && edWordApprovals.has(word)) {
+                await _toggleWordAppr(word);
+                gbtn.className = 'ws-btn ws-btn-green';
+            }
+        };
+
+        row.appendChild(wspan); row.appendChild(gbtn); row.appendChild(rbtn);
+        body.appendChild(row);
+    }
+}
+
+// ── Customize This Puzzle — per-board word list only ────────────────────────
+function openPuzzleCustomize() {
+    if (!_edCurrentWords.length && !_edPuzzleCustom.length) {
+        showStatus('No words yet — add letters to the board first.', 'info');
+        return;
+    }
+    _puzzleCustomMsg('');
+    renderPuzzleCustomList();
+    document.getElementById('puzzle-custom-modal').classList.add('open');
+    setTimeout(() => document.getElementById('puzzle-custom-input').focus(), 0);
+}
+function closePuzzleCustomize() {
+    document.getElementById('puzzle-custom-modal').classList.remove('open');
+    updateWordCount(); // reflect removals/additions in the active count + list
+}
+
+function _puzzleCustomMsg(text) {
+    const el = document.getElementById('puzzle-custom-msg');
+    if (!el) return;
+    el.textContent = text || '';
+    el.style.display = text ? 'block' : 'none';
+}
+
+function puzzleCustomAddWord() {
+    const input = document.getElementById('puzzle-custom-input');
+    const word = (input.value || '').trim().toUpperCase().replace(/[^A-Z]/g, '');
+    input.value = '';
+    _puzzleCustomMsg('');
+    if (!word) return;
+    if (word.length < 4) {
+        _puzzleCustomMsg('Words must be at least 4 letters.');
+        return;
+    }
+    // A custom word that can't be traced on this board can never be found in
+    // the game — block it so the puzzle stays winnable.
+    const { cells } = readCells();
+    if (!edCanSpell(word, cells, editorRows, editorCols)) {
+        _puzzleCustomMsg(`"${word}" can't be spelled on this board, so it was not added.`);
+        return;
+    }
+    // If it was removed from this puzzle, re-adding just un-removes it.
+    if (_edPuzzleRemoved.has(word)) _edPuzzleRemoved.delete(word);
+    // Only flag as "custom" (blue) when it isn't already a board-spellable word.
+    if (!_edPuzzleCustom.includes(word) && !_edCurrentWords.includes(word)) {
+        _edPuzzleCustom.push(word);
+        // Custom words live in the working list so they survive a recount.
+        if (!_edAddedWords.includes(word)) _edAddedWords.push(word);
+        _edCurrentWords.push(word);
+    }
+    renderPuzzleCustomList();
+    const body = document.getElementById('puzzle-custom-body');
+    body.scrollTop = body.scrollHeight;
+}
+
+function renderPuzzleCustomList() {
+    const body = document.getElementById('puzzle-custom-body');
+    body.innerHTML = '';
+    // Board-computed words (incl. globally red-excluded, so they can be re-added),
+    // sorted by length; this puzzle's custom words pinned to the bottom.
+    const computed = _edCurrentWords
+        .filter(w => !_isCustomWord(w))
+        .sort((a, b) => a.length - b.length || a.localeCompare(b));
+    const ordered = [...computed, ..._edPuzzleCustom];
+    if (!ordered.length) {
+        body.innerHTML = '<div style="padding:16px 18px;font-size:0.82rem;color:var(--text-muted)">No words yet.</div>';
+        return;
+    }
+    for (const word of ordered) {
+        const custom = _isCustomWord(word);
+        const row = document.createElement('div');
+        row.className = 'ws-row';
+
+        const wspan = document.createElement('span');
+        wspan.className = 'ws-word' + (custom ? ' is-custom' : '');
+        wspan.textContent = word;
+        if (custom) {
+            const badge = document.createElement('span');
+            badge.className = 'ws-custom-badge'; badge.textContent = 'custom';
+            wspan.appendChild(badge);
+        }
+
+        // Green ✓ — shows/toggles dictionary approval (parity with other lists).
+        const gbtn = document.createElement('button');
+        gbtn.className = 'ws-btn ws-btn-green' + (edWordApprovals.has(word) ? ' active' : '');
+        gbtn.innerHTML = '✓';
+
+        // ✕ (blue) — in/out of THIS puzzle only. Active = NOT in this puzzle,
+        // whether removed here or globally excluded and not re-included.
+        const rbtn = document.createElement('button');
+        const out = !_edPuzzleHas(word);
+        rbtn.className = 'ws-btn ws-btn-blue' + (out ? ' active' : '');
+        rbtn.innerHTML = '✕';
+        rbtn.title = 'Include / remove for this puzzle only';
+        if (out) wspan.style.textDecoration = 'line-through';
+
+        gbtn.onclick = async () => {
+            const nowApproved = await _toggleWordAppr(word);
+            gbtn.className = 'ws-btn ws-btn-green' + (nowApproved ? ' active' : '');
+        };
+        rbtn.onclick = () => {
+            const nowIn = _edPuzzleToggle(word);
+            rbtn.className = 'ws-btn ws-btn-blue' + (nowIn ? '' : ' active');
+            wspan.style.textDecoration = nowIn ? '' : 'line-through';
         };
 
         row.appendChild(wspan); row.appendChild(gbtn); row.appendChild(rbtn);
@@ -777,6 +1058,73 @@ let _edCurrentWords = [];
 // Words added manually this session — kept at the bottom, not reordered.
 let _edAddedWords = [];
 
+// ── Per-puzzle customizations (this board only — saved/restored per date) ───
+// Board-spellable words removed from THIS puzzle only (not the dictionary).
+let _edPuzzleRemoved = new Set();
+// Words force-INCLUDED for this puzzle even though they're globally excluded.
+let _edPuzzleIncluded = new Set();
+// Custom words added to THIS puzzle only (not the dictionary). Shown in blue.
+let _edPuzzleCustom = [];
+
+function _isCustomWord(w) { return _edPuzzleCustom.includes(w); }
+
+// Effective per-puzzle membership for a board word. Per-puzzle removal always
+// wins; otherwise a globally-excluded word is out unless locally re-included.
+function _edPuzzleHas(w) {
+    if (_edPuzzleRemoved.has(w)) return false;
+    if (edWordSelections.has(w) && !_edPuzzleIncluded.has(w)) return false;
+    return true;
+}
+// Toggle a board word in/out of THIS puzzle (handles the global-red override).
+function _edPuzzleToggle(w) {
+    if (_edPuzzleHas(w)) {
+        // Remove from this puzzle.
+        _edPuzzleIncluded.delete(w);
+        if (!edWordSelections.has(w)) _edPuzzleRemoved.add(w);
+    } else {
+        // Add back to this puzzle.
+        _edPuzzleRemoved.delete(w);
+        if (edWordSelections.has(w)) _edPuzzleIncluded.add(w);
+    }
+    return _edPuzzleHas(w);
+}
+
+// Words that end up in the saved puzzle: board words effectively in the puzzle,
+// plus this puzzle's custom words (unless removed).
+function _edActivePuzzleWords() {
+    const out = [];
+    for (const w of _edCurrentWords) {
+        if (_isCustomWord(w)) continue;     // custom handled below (avoid dupes)
+        if (_edPuzzleHas(w)) out.push(w);
+    }
+    for (const w of _edPuzzleCustom) if (!_edPuzzleRemoved.has(w)) out.push(w);
+    return out;
+}
+
+// Board-spellable words that were red-checkmarked (excluded from the valid
+// list). These become "Linguist Bonus" words in the game: not required to win,
+// but recognized if a player happens to find one. Custom words and words that
+// are actually in the active puzzle are not bonuses.
+function _edBonusPuzzleWords() {
+    const out = [];
+    for (const w of _edCurrentWords) {
+        if (_isCustomWord(w)) continue;
+        if (_edPuzzleHas(w)) continue;            // it's in the active list — not a bonus
+        if (!edWordSelections.has(w)) continue;   // only red-excluded words count
+        out.push(w);
+    }
+    return out;
+}
+
+// Reset per-puzzle state — called when switching boards / loading a date.
+function _resetPuzzleCustomizations(cfg) {
+    _edPuzzleRemoved  = new Set(Array.isArray(cfg?.puzzleRemoved)  ? cfg.puzzleRemoved  : []);
+    _edPuzzleIncluded = new Set(Array.isArray(cfg?.puzzleIncluded) ? cfg.puzzleIncluded : []);
+    _edPuzzleCustom   = Array.isArray(cfg?.puzzleCustom) ? cfg.puzzleCustom.slice() : [];
+    // Custom words must appear in the working word list so they survive recount.
+    for (const w of _edPuzzleCustom) if (!_edAddedWords.includes(w)) _edAddedWords.push(w);
+}
+
 function updateWordCount() {
     const el = document.getElementById('word-count');
     if (!edDict) { el.textContent = '—'; _edCurrentWords = []; renderWordList(); return; }
@@ -790,11 +1138,16 @@ function updateWordCount() {
         for (const ch of word) if (!ls.has(ch)) { ok=false; break; }
         if (ok && edCanSpell(word, cells, editorRows, editorCols)) words.push(word);
     }
+    // Words approved via Add/Remove Words count too, even if not in the base
+    // dictionary, as long as the board can spell them.
+    for (const word of edWordApprovals) {
+        if (words.includes(word)) continue;
+        if (edCanSpell(word, cells, editorRows, editorCols)) words.push(word);
+    }
     // Keep any manually-added words (not spellable on the board) in the list.
     for (const w of _edAddedWords) if (!words.includes(w)) words.push(w);
     _edCurrentWords = words;
-    const activeCount = words.filter(w => !edWordSelections.has(w)).length;
-    el.textContent = activeCount.toLocaleString();
+    el.textContent = _edActivePuzzleWords().length.toLocaleString();
     renderWordList();
 }
 
@@ -818,7 +1171,17 @@ function renderWordList() {
         hdr.textContent = `${len}-letter (${wList.length})`;
         sec.appendChild(hdr);
         const chips = document.createElement('div'); chips.className = 'word-chips';
-        wList.forEach(w => { const c = document.createElement('span'); c.className = 'word-chip'; c.textContent = w; if (edWordSelections.has(w)) c.style.color = 'var(--error)'; chips.appendChild(c); });
+        wList.forEach(w => {
+            const c = document.createElement('span');
+            c.className = 'word-chip' + (_isCustomWord(w) ? ' is-custom' : '');
+            c.textContent = w;
+            // Strike + mute anything not in the saved puzzle (excluded or removed here).
+            if (!_isCustomWord(w) && !_edPuzzleHas(w)) {
+                c.style.color = 'var(--error)';
+                c.style.textDecoration = 'line-through';
+            }
+            chips.appendChild(c);
+        });
         sec.appendChild(chips);
         container.appendChild(sec);
     });
@@ -1122,6 +1485,7 @@ function fillRandom() {
         for(let r=0;r<editorRows;r++) for(let c=0;c<editorCols;c++){
             const inp=inputs[r*editorCols+c]; if(inp) inp.value=cells[r][c];
         }
+        _edAddedWords=[]; _resetPuzzleCustomizations(null);
         clearStatus(); scheduleWordCount(); return;
     }
 }
@@ -1136,6 +1500,7 @@ function generateRandom() {
         const board=_edToBoard(graph);
         if(edDict && !_edAllTilesUsed(board.cells, board.rows, board.cols)) continue;
         editorRows=board.rows; editorCols=board.cols;
+        _edAddedWords=[]; _resetPuzzleCustomizations(null);
         buildEditorTable(false, board.cells);
         clearStatus(); scheduleWordCount(); return;
     }
