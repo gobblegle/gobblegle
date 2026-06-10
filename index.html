@@ -2589,23 +2589,27 @@ async function loadGameWordSelections() {
     } catch {}
 }
 
+// Compute this room board's valid words AND its Linguist Bonus words (board-
+// spellable words that are red-checkmarked out of the valid list), so each VS
+// board carries its own bonus list — independent of the daily puzzle.
 function computeRoomWords(board) {
-    if (!dictionary.size) return [];
+    if (!dictionary.size) return { words: [], bonusWords: [] };
     const savedR = boardRows, savedC = boardCols, savedCells = boardCells;
     boardRows = board.rows; boardCols = board.cols; boardCells = board.cells;
     const ls = new Set();
     for (let r = 0; r < boardRows; r++)
         for (let c = 0; c < boardCols; c++)
             if (boardCells[r]?.[c]) ls.add(boardCells[r][c]);
-    const words = [];
+    const words = [], bonus = [];
     for (const word of dictionary) {
-        if (gameWordSelections.has(word)) continue;
         let ok = true;
         for (const ch of word) if (!ls.has(ch)) { ok = false; break; }
-        if (ok && canSpellOnBoard(word)) words.push(word);
+        if (!ok || !canSpellOnBoard(word)) continue;
+        if (gameWordSelections.has(word)) bonus.push(word);
+        else words.push(word);
     }
     boardRows = savedR; boardCols = savedC; boardCells = savedCells;
-    return words;
+    return { words, bonusWords: bonus };
 }
 
 // ── Game start ─────────────────────────────────────────────────────────────
@@ -2625,8 +2629,9 @@ async function autoStartGame(data) {
             const cols = s.cols || s.size || 4;
             const nextRound = (d.currentRound ?? -1) + 1;
             const board = s.mode === 'random' ? generateProceduralBoard(20) : generateShapedBoard(rows, cols);
-            const words = computeRoomWords(board);
+            const { words, bonusWords: bonus } = computeRoomWords(board);
             if (words.length) board.words = words;
+            if (bonus.length) board.bonusWords = bonus;
             const updates = { board, startedAt: Date.now(), currentRound: nextRound };
             for (const pid of Object.keys(d.players || {})) {
                 updates[`players/${pid}/closedScoreboard`] = false;
@@ -2649,13 +2654,19 @@ function renderRoomPlaying(data) {
 
     boardRows = data.board.rows; boardCols = data.board.cols; boardCells = data.board.cells;
     preloadedWords = data.board.words?.length ? new Set(data.board.words) : null;
+    // This room board carries its own Linguist Bonus list — don't let the daily
+    // puzzle's bonus words leak in. Reset found bonuses for the new round too.
+    preloadedBonusWords = data.board.bonusWords?.length ? new Set(data.board.bonusWords) : null;
+    foundBonusWords  = new Set();
     roomFoundWords   = new Set();
     roomScoreSubmitted = false;
     roomCurrentRound   = data.currentRound ?? 0;
 
-    // Populate validWords immediately so score shows without delay
+    // Populate validWords + bonusWords immediately so score shows without delay
     validWords.clear();
+    bonusWords.clear();
     if (preloadedWords) for (const word of preloadedWords) validWords.add(word);
+    if (preloadedBonusWords) for (const word of preloadedBonusWords) bonusWords.add(word);
 
     document.getElementById('room-score-display').textContent = 'Score: 0';
     document.getElementById('timer-display').textContent = '--:--';
@@ -2693,7 +2704,7 @@ async function endRoomGame() {
     roomScoreSubmitted = true;
 
     await roomRef.child(`players/${playerId}/rounds/${roomCurrentRound}`)
-        .set({ score: totalScore(roomFoundWords), words: [...roomFoundWords] });
+        .set({ score: totalScore(roomFoundWords), words: [...roomFoundWords], bonusWords: [...foundBonusWords] });
     await roomRef.child(`players/${playerId}`).update({ ready: false, closedScoreboard: false });
 
     roomRef.child('state').transaction(cur => cur==='playing' ? 'finished' : undefined,
@@ -2744,7 +2755,7 @@ function renderScoreboard(data) {
     if (!roomScoreSubmitted && roomPlayingInitialized) {
         roomScoreSubmitted = true;
         roomRef.child(`players/${playerId}/rounds/${roomCurrentRound}`)
-            .set({ score: totalScore(roomFoundWords), words: [...roomFoundWords] });
+            .set({ score: totalScore(roomFoundWords), words: [...roomFoundWords], bonusWords: [...foundBonusWords] });
         roomRef.child(`players/${playerId}`).update({ ready: false, closedScoreboard: false });
     }
     if (roomCountdownInterval) { clearInterval(roomCountdownInterval); roomCountdownInterval=null; }
@@ -2759,7 +2770,8 @@ function renderScoreboard(data) {
         name:       p.name || '?',
         gamePoints: p.gamePoints || 0,
         roundScore: p.rounds?.[round]?.score ?? null,
-        roundWords: p.rounds?.[round]?.words || []
+        roundWords: p.rounds?.[round]?.words || [],
+        roundBonus: p.rounds?.[round]?.bonusWords || []
     })).sort((a,b) => b.gamePoints-a.gamePoints || (b.roundScore||0)-(a.roundScore||0));
 
     document.getElementById('player-modal-overlay')?.remove();
@@ -2773,7 +2785,7 @@ function renderScoreboard(data) {
         row.innerHTML=`<span class="score-name">${e.name}</span>
             <span class="score-gp">${e.gamePoints} pt${e.gamePoints!==1?'s':''}</span>
             <span class="score-rnd">${e.roundScore!==null?'+'+e.roundScore:'…'}</span>`;
-        row.onclick = () => openPlayerModal(e.name, e.roundWords);
+        row.onclick = () => openPlayerModal(e.name, e.roundWords, e.roundBonus);
         sb.appendChild(row);
     });
 
@@ -2782,10 +2794,10 @@ function renderScoreboard(data) {
     sep.style.cssText = 'border-top:3px solid var(--text-muted);margin:4px 0 2px';
     sb.appendChild(sep);
 
-    buildWordGroup(sb, roomFoundWords, validWords, 'Your Words');
+    buildWordGroup(sb, roomFoundWords, validWords, 'Your Words', foundBonusWords);
 }
 
-function buildWordGroup(container, foundSet, allWords, label) {
+function buildWordGroup(container, foundSet, allWords, label, bonusFoundSet) {
     if (label) {
         const title = document.createElement('div');
         title.style.cssText = 'font-size:0.82rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin:4px 0 2px';
@@ -2804,27 +2816,40 @@ function buildWordGroup(container, foundSet, allWords, label) {
         none.style.cssText = 'color:var(--text-muted);font-size:.88rem;padding:4px 0';
         none.textContent = 'No words available.';
         container.appendChild(none);
-        return;
+    } else {
+        keys.forEach(len => {
+            const words = groups[len].sort();
+            const foundCount = words.filter(w => foundSet.has(w)).length;
+            const sec = document.createElement('div'); sec.className = 'popup-section';
+            const row = document.createElement('div'); row.className = 'popup-row';
+            row.innerHTML = `<span class="popup-label">${len}-letter words</span><span class="popup-count">${foundCount} / ${words.length}</span>`;
+            sec.appendChild(row);
+            const wl = document.createElement('div'); wl.className = 'popup-words';
+            words.forEach(w => {
+                const chip = document.createElement('span'); chip.className = 'popup-chip'; chip.textContent = w;
+                if (foundSet.has(w)) { chip.style.fontWeight = '700'; chip.style.color = '#16a34a'; }
+                wl.appendChild(chip);
+            });
+            sec.appendChild(wl);
+            container.appendChild(sec);
+        });
     }
-    keys.forEach(len => {
-        const words = groups[len].sort();
-        const foundCount = words.filter(w => foundSet.has(w)).length;
+
+    // ── Linguist Bonuses ── found red-checkmarked words, alphabetical, no total.
+    const foundBonus = bonusFoundSet ? [...bonusFoundSet].sort() : [];
+    if (foundBonus.length) {
         const sec = document.createElement('div'); sec.className = 'popup-section';
         const row = document.createElement('div'); row.className = 'popup-row';
-        row.innerHTML = `<span class="popup-label">${len}-letter words</span><span class="popup-count">${foundCount} / ${words.length}</span>`;
+        row.innerHTML = '<span class="popup-label">Linguist Bonuses</span>';
         sec.appendChild(row);
         const wl = document.createElement('div'); wl.className = 'popup-words';
-        words.forEach(w => {
-            const chip = document.createElement('span'); chip.className = 'popup-chip'; chip.textContent = w;
-            if (foundSet.has(w)) { chip.style.fontWeight = '700'; chip.style.color = '#16a34a'; }
-            wl.appendChild(chip);
-        });
+        foundBonus.forEach(w => { const chip = document.createElement('span'); chip.className = 'popup-chip'; chip.textContent = w; wl.appendChild(chip); });
         sec.appendChild(wl);
         container.appendChild(sec);
-    });
+    }
 }
 
-function openPlayerModal(name, foundWordsArr) {
+function openPlayerModal(name, foundWordsArr, bonusWordsArr) {
     document.getElementById('player-modal-overlay')?.remove();
 
     const overlay = document.createElement('div');
@@ -2850,7 +2875,7 @@ function openPlayerModal(name, foundWordsArr) {
 
     const body = document.createElement('div');
     body.className = 'player-modal-body';
-    buildWordGroup(body, new Set(foundWordsArr), validWords, null);
+    buildWordGroup(body, new Set(foundWordsArr), validWords, null, new Set(bonusWordsArr || []));
     modal.appendChild(body);
 
     overlay.appendChild(modal);
