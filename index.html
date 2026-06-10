@@ -130,6 +130,7 @@
         .popup-label { font-weight: 600; color: var(--text-muted); }
         .popup-count { font-weight: 700; color: var(--primary); }
         .popup-words { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 3px 0 6px; }
+        .popup-words.column { flex-direction: column; flex-wrap: nowrap; gap: 2px; }
         .popup-chip { color: var(--text); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
         .popup-remaining { font-size: 0.75rem; color: var(--text-muted); padding: 2px 0 0; font-style: italic; }
         .popup-views { display: flex; gap: 6px; margin-bottom: 8px; }
@@ -1908,11 +1909,12 @@ let popupView = 'len';
 
 // Hint panel state. hintScreen: null (normal popup), 'menu', 'reveal',
 // 'alpha' (order alphabetical), 'first' (show first letter).
-// `hintsUsed` records which hints were used on this board ('reveal'|'alpha'|'first'):
+// `hintsUsed` records which hints were used on this board:
 //   - 'reveal' is one-shot (greys out the option).
-//   - 'alpha'/'first' persist: they fill the main #/# by-length view with **** /
-//     first-letter placeholders and remove their own menu option.
-// Each used hint also adds one '*' to the share button's found count (max ***).
+//   - 'alpha'/'first'/'last' persist and fill the main #/# by-length view with
+//     placeholders (**** → first-letter → first+last). They unlock progressively:
+//     'first' only appears after 'alpha' is used, 'last' only after 'first'.
+// Each used hint also adds one '*' to the share button's found count.
 let hintScreen = null;
 let hintsUsed = new Set();
 
@@ -1972,31 +1974,33 @@ function renderHintScreen(popup) {
         back(null);
         const title=document.createElement('div'); title.className='hint-title'; title.textContent='Hints'; popup.appendChild(title);
 
-        // Reveal Word — one-shot; greys out once used.
+        // Reveal Word — one-shot; greys out once used or when nothing is revealable
+        // (no eligible length, or every eligible length is already fully found).
         const revealUsed = hintsUsed.has('reveal');
+        const canReveal = revealableLengths().some(len =>
+            [...validWords].some(w => w.length === len && !foundWords.has(w)));
         const reveal=document.createElement('button'); reveal.className='hint-option';
         reveal.textContent = revealUsed ? 'Reveal Word (used)' : 'Reveal Word';
-        reveal.disabled = revealUsed;
-        reveal.onclick=(ev)=>{ ev.stopPropagation(); if(revealUsed) return; hintScreen='reveal'; renderPopup(); };
+        reveal.disabled = revealUsed || !canReveal;
+        reveal.onclick=(ev)=>{ ev.stopPropagation(); if(revealUsed || !canReveal) return; hintScreen='reveal'; renderPopup(); };
         popup.appendChild(reveal);
 
-        // Order Alphabetical — persists into the main list, then its option disappears.
+        // Progressive list hints: each unlocks the next. Order Alphabetical is
+        // always available; Show First only after Alphabetical; Show Last only
+        // after First. Each persists into the main list and disappears once used.
+        const addListHint = (kind, label) => {
+            const b=document.createElement('button'); b.className='hint-option';
+            b.textContent=label;
+            b.onclick=(ev)=>{ ev.stopPropagation(); applyListHint(kind); };
+            popup.appendChild(b);
+        };
         if (!hintsUsed.has('alpha')) {
-            const alpha=document.createElement('button'); alpha.className='hint-option';
-            alpha.textContent='Order Alphabetical';
-            alpha.onclick=(ev)=>{ ev.stopPropagation(); applyListHint('alpha'); };
-            popup.appendChild(alpha);
-        }
-
-        // Show First — persists into the main list, then its option disappears.
-        if (!hintsUsed.has('first')) {
-            const first=document.createElement('button'); first.className='hint-option';
-            first.textContent='Show First';
-            first.onclick=(ev)=>{ ev.stopPropagation(); applyListHint('first'); };
-            popup.appendChild(first);
-        }
-
-        if (hintsUsed.has('alpha') && hintsUsed.has('first')) {
+            addListHint('alpha', 'Order Alphabetical');
+        } else if (!hintsUsed.has('first')) {
+            addListHint('first', 'Show First Letter');
+        } else if (!hintsUsed.has('last')) {
+            addListHint('last', 'Show Last Letter');
+        } else {
             const none=document.createElement('div'); none.className='hint-note';
             none.style.marginTop='4px';
             none.textContent='All list hints applied to your word list.';
@@ -2008,9 +2012,9 @@ function renderHintScreen(popup) {
     if (hintScreen === 'reveal') { renderHintReveal(popup, back); return; }
 }
 
-// Apply a persisting list hint ('alpha' or 'first') to the main #/# by-length
-// view: mark it used (which also adds a '*' to the share count), then drop back
-// to the normal Found list so the placeholders show immediately.
+// Apply a persisting list hint ('alpha' | 'first' | 'last') to the main #/#
+// by-length view: mark it used (which also adds a '*' to the share count), then
+// drop back to the normal Found list so the placeholders show immediately.
 function applyListHint(kind) {
     if (!hintsUsed.has(kind)) {
         hintsUsed.add(kind);
@@ -2020,16 +2024,18 @@ function applyListHint(kind) {
     renderPopup();
 }
 
-// "Reveal Word" — one button per remaining word-length; clicking reveals a random
+// "Reveal Word" — one button per eligible word-length; clicking reveals a random
 // unfound word of that length (shown green in the preview, as if just found).
+// The two longest word-lengths on the board are never revealable. A length with
+// no unfound words left is shown greyed/disabled so it can't be clicked.
 function renderHintReveal(popup, back) {
     back('menu');
     const title=document.createElement('div'); title.className='hint-title'; title.textContent='Reveal a Word'; popup.appendChild(title);
 
-    // Remaining word lengths that still have an unfound word.
-    const lengths = [...new Set([...validWords].filter(w => !foundWords.has(w)).map(w => w.length))].sort((a,b)=>a-b);
+    const lengths = revealableLengths();
     if (!lengths.length) {
-        const none=document.createElement('div'); none.className='hint-note'; none.textContent='All words found!'; popup.appendChild(none);
+        const none=document.createElement('div'); none.className='hint-note';
+        none.textContent='No words available to reveal.'; popup.appendChild(none);
         return;
     }
     const note=document.createElement('div'); note.className='hint-note';
@@ -2037,12 +2043,22 @@ function renderHintReveal(popup, back) {
     popup.appendChild(note);
     const row=document.createElement('div'); row.style.cssText='padding-top:8px';
     lengths.forEach(len => {
+        const remaining = [...validWords].some(w => w.length === len && !foundWords.has(w));
         const b=document.createElement('button'); b.className='hint-len-btn';
         b.textContent=`${len} letter word`;
-        b.onclick=(ev)=>{ ev.stopPropagation(); revealHintWord(len); };
+        b.disabled = !remaining;
+        if (!remaining) b.style.opacity='0.4';
+        b.onclick=(ev)=>{ ev.stopPropagation(); if(!remaining) return; revealHintWord(len); };
         row.appendChild(b);
     });
     popup.appendChild(row);
+}
+
+// Eligible "Reveal Word" lengths: all distinct word-lengths on the board EXCEPT
+// the two longest. (e.g. board has 4–8 letter words → reveal only 4, 5, 6.)
+function revealableLengths() {
+    const all = [...new Set([...validWords].map(w => w.length))].sort((a,b)=>a-b);
+    return all.slice(0, Math.max(0, all.length - 2));
 }
 
 // Reveal one random unfound word of the given length: add it to found, show it
@@ -2073,6 +2089,15 @@ function revealHintWord(len) {
     document.getElementById('word-popup').style.display='none';
 }
 
+// Placeholder string for an unfound word under a list hint:
+//   'alpha' → all stars (****), 'first' → first letter + stars (B***),
+//   'last'  → first + stars + last letter (B**S).
+function hintPlaceholder(w, listHint) {
+    if (listHint === 'first') return w[0] + '*'.repeat(w.length - 1);
+    if (listHint === 'last')  return w[0] + '*'.repeat(w.length - 2) + w[w.length - 1];
+    return '*'.repeat(w.length);
+}
+
 // Default view: words grouped by letter count, with per-length counts.
 function renderPopupByLength(popup) {
     const myWords = roomMode ? roomFoundWords : foundWords;
@@ -2083,10 +2108,12 @@ function renderPopupByLength(popup) {
         if (myWords.has(w)) groups[w.length].found++;
     }
     const keys = Object.keys(groups).sort((a,b)=>a-b);
-    // Persisting list hints (solo only): 'first' reveals first letters (takes
-    // precedence as it shows more), else 'alpha' shows **** placeholders.
+    // Persisting list hints (solo only). Highest unlocked level wins since each
+    // reveals strictly more: 'last' (first+last letters) > 'first' > 'alpha' (****).
     const listHint = roomMode ? null
-        : (hintsUsed.has('first') ? 'first' : (hintsUsed.has('alpha') ? 'alpha' : null));
+        : (hintsUsed.has('last') ? 'last'
+          : (hintsUsed.has('first') ? 'first'
+          : (hintsUsed.has('alpha') ? 'alpha' : null)));
     if (!keys.length) {
         const empty=document.createElement('div');
         empty.style.cssText='color:var(--text-muted);font-size:.9rem;padding:4px 0';
@@ -2109,7 +2136,7 @@ function renderPopupByLength(popup) {
                     else {
                         chip.style.color='var(--word-already)';
                         chip.style.letterSpacing='0.12em';
-                        chip.textContent = listHint==='first' ? w[0]+'*'.repeat(w.length-1) : '*'.repeat(w.length);
+                        chip.textContent = hintPlaceholder(w, listHint);
                     }
                     wl.appendChild(chip);
                 });
@@ -2145,7 +2172,8 @@ function renderPopupFlat(popup) {
     row.innerHTML=`<span class="popup-label">Found</span><span class="popup-count">${words.length} / ${validWords.size}</span>`;
     sec.appendChild(row);
     if (words.length) {
-        const wl=document.createElement('div'); wl.className='popup-words';
+        // Single column for the alphabetical / chronological views.
+        const wl=document.createElement('div'); wl.className='popup-words column';
         words.forEach(w=>{const chip=document.createElement('span');chip.className='popup-chip';chip.textContent=w;wl.appendChild(chip);});
         sec.appendChild(wl);
     } else {
@@ -2211,16 +2239,21 @@ function calculateValidWords() {
 
 // ── Solo reset ─────────────────────────────────────────────────────────────
 function resetProgress() {
+    const h = getBoardHash();
     foundWords.clear();
     foundBonusWords.clear();
     resetTimer();
     hintsUsed = new Set();
     hintScreen = null;
+    // Clear revealed answers too, so the board unlocks and is fully playable again.
+    answersRevealed = false;
+    localStorage.removeItem(`G2_answers_${h}`);
     localStorage.removeItem('G2_share_time');
-    localStorage.removeItem(`G2_hints_used_${getBoardHash()}`);
+    localStorage.removeItem(`G2_hints_used_${h}`);
     saveProgress();
     updateScoreUI();
     clearPathUI();
+    updateAnswerRevealSection();
     const popup = document.getElementById('word-popup');
     if (popup) popup.style.display = 'none';
     updateTileHints();
@@ -2860,9 +2893,11 @@ function shareGame() {
     const mm = String(Math.floor(secs / 60)).padStart(2, '0');
     const ss = String(secs % 60).padStart(2, '0');
     const score = totalScore(foundWords);
-    // One '*' per hint used this puzzle, appended to the found count (max ***).
-    const hintMarks = '*'.repeat(hintsUsed.size);
-    const text = `🦃 I played Gobblegle! 🦃\nFound: ${foundWords.size}/${validWords.size}${hintMarks}\nScore: ${score}\n${mm}:${ss}\nhttps://gobblegle.com`;
+    // Spelled-out hint count line, between the time and the website link.
+    const hintWords = ['Zero','One','Two','Three','Four'];
+    const n = hintsUsed.size;
+    const hintLine = `${hintWords[n] ?? n} hint${n === 1 ? '' : 's'} used`;
+    const text = `🦃 I played Gobblegle! 🦃\nFound: ${foundWords.size}/${validWords.size}\nScore: ${score}\n${mm}:${ss}\n${hintLine}\nhttps://gobblegle.com`;
     if (navigator.share) {
         navigator.share({ title: 'Gobblegle', text }).catch(() => {});
     } else {
