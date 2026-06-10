@@ -231,9 +231,9 @@
             <button class="btn btn-sec" onclick="generateRandom()">Generate Random</button>
             <button class="btn btn-sec" onclick="fillRandom()">Fill Random</button>
             <button class="btn btn-sec" onclick="clearAll()">Clear</button>
-            <button class="btn btn-sec" onclick="openWordSelect()">Select Words</button>
-            <button class="btn btn-sec" onclick="openDictEdit()">Add/Remove Words</button>
+            <button class="btn btn-sec" onclick="openWordSelect()">Select Words in This Puzzle</button>
             <button class="btn btn-sec" onclick="openPuzzleCustomize()">Customize This Puzzle</button>
+            <button class="btn btn-sec" onclick="openDictEdit()">Add/Remove Words to Dictionary</button>
             <button class="btn btn-sec" onclick="testBoard()">Test</button>
         </div>
         <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
@@ -261,7 +261,7 @@
 <div id="word-select-modal">
     <div class="ws-panel">
         <div class="ws-header">
-            <span>Select Words</span>
+            <span>Select Words in This Puzzle</span>
             <button class="btn btn-sec" style="padding:4px 10px;font-size:0.82rem" onclick="closeWordSelect()">✕</button>
         </div>
         <div class="ws-col-labels">
@@ -270,12 +270,6 @@
             <span style="width:28px;text-align:center;color:#dc2626">✕</span>
         </div>
         <div class="ws-body" id="ws-body"></div>
-        <div class="ws-add">
-            <input type="text" id="ws-add-input" class="field-input" placeholder="Add a word…"
-                   autocomplete="off" spellcheck="false"
-                   onkeydown="if(event.key==='Enter'){event.preventDefault();addManualWord();}">
-            <button class="btn" style="padding:9px 16px" onclick="addManualWord()">Add</button>
-        </div>
         <div class="ws-footer">
             <span class="ws-footer-note">✓ approved &nbsp;·&nbsp; ✕ excluded from valid list</span>
             <button class="btn btn-sec" onclick="closeWordSelect()">Cancel</button>
@@ -288,7 +282,7 @@
 <div id="dict-edit-modal" class="ws-modal-shell">
     <div class="ws-panel">
         <div class="ws-header">
-            <span>Add / Remove Words</span>
+            <span>Add / Remove Words to Dictionary</span>
             <button class="btn btn-sec" style="padding:4px 10px;font-size:0.82rem" onclick="closeDictEdit()">✕</button>
         </div>
         <div class="ws-col-labels">
@@ -751,24 +745,6 @@ function applyWordSelections() {
     closeWordSelect();
 }
 
-function addManualWord() {
-    const input = document.getElementById('ws-add-input');
-    const word = (input.value || '').trim().toUpperCase().replace(/[^A-Z]/g, '');
-    if (!word) return;
-    // Already present (computed or previously added)? just clear and bail.
-    if (_edCurrentWords.includes(word) || _edAddedWords.includes(word)) {
-        input.value = '';
-        return;
-    }
-    _edAddedWords.push(word);
-    _edCurrentWords.push(word);
-    // Default the added word to green (approved).
-    if (!edWordApprovals.has(word)) _toggleWordAppr(word);
-    input.value = '';
-    renderWordSelectList();
-    document.getElementById('ws-body').scrollTop = document.getElementById('ws-body').scrollHeight;
-}
-
 function renderWordSelectList() {
     const body = document.getElementById('ws-body');
     const computed = _edCurrentWords.filter(w => !_edAddedWords.includes(w))
@@ -839,6 +815,14 @@ function dictEditAddWord() {
     const word = (input.value || '').trim().toUpperCase().replace(/[^A-Z]/g, '');
     input.value = '';
     if (!word) return;
+    // First time this word is added here: default it to approved (green ✓) and
+    // clear any standing exclusion. Re-typing an existing entry just re-sorts it,
+    // preserving whatever state the user set.
+    const isNew = !_dictEditWords.includes(word);
+    if (isNew) {
+        if (!edWordApprovals.has(word)) _toggleWordAppr(word);
+        if (edWordSelections.has(word)) _toggleWordSel(word);
+    }
     // Bring an already-listed word to the top rather than duplicating it.
     _dictEditWords = _dictEditWords.filter(w => w !== word);
     _dictEditWords.unshift(word);
