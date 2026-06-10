@@ -126,6 +126,7 @@
             cursor: pointer; text-align: center; font-family: inherit;
         }
         .popup-reset:hover { background: var(--cell-active); color: var(--error); border-color: var(--error); }
+        .popup-reset.confirm { background: var(--cell-active); color: var(--error); border-color: var(--error); }
         .popup-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 0.9rem; }
         .popup-label { font-weight: 600; color: var(--text-muted); }
         .popup-count { font-weight: 700; color: var(--primary); }
@@ -1955,7 +1956,19 @@ function renderPopup() {
         popup.appendChild(hb);
 
         const rb=document.createElement('button'); rb.className='popup-reset'; rb.textContent='Reset Progress';
-        rb.onclick=()=>{resetProgress();popup.style.display='none';};
+        let resetArmed=false;
+        rb.onclick=(ev)=>{
+            ev.stopPropagation();
+            if (!resetArmed) {
+                // First tap: ask for confirmation rather than wiping progress immediately.
+                resetArmed=true;
+                rb.classList.add('confirm');
+                rb.textContent='Tap again to confirm reset';
+                return;
+            }
+            resetProgress();
+            popup.style.display='none';
+        };
         popup.appendChild(rb);
     }
 }
