@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <title>Gobblegle</title>
@@ -60,6 +60,9 @@
         /* ── Header ── */
         header {
             width: 100%; max-width: 540px; padding: 14px 16px;
+            /* Pad the top by the device's safe-area inset so the logo clears the
+               camera notch / status bar on phones (viewport-fit=cover). */
+            padding-top: calc(14px + env(safe-area-inset-top, 0px));
             display: flex; justify-content: center; align-items: center;
             border-bottom: 1px solid var(--border); background: var(--surface);
             position: relative;
@@ -348,6 +351,11 @@
 <script>
     // Apply saved dark-mode preference immediately to avoid a flash of light theme.
     try { if (localStorage.getItem('G2_dark_mode') === '1') document.body.classList.add('dark'); } catch {}
+    // Don't let the browser restore the previous scroll position on revisit —
+    // it leaves the page nudged down so the logo slides under the phone's camera notch.
+    try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch {}
+    // Snap back to the top whenever the page is shown again (incl. back/forward cache restores).
+    window.addEventListener('pageshow', function () { window.scrollTo(0, 0); });
 </script>
 
 <div class="loader" id="loader">
