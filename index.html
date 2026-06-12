@@ -154,6 +154,8 @@
             cursor: pointer; text-align: center; font-family: inherit;
         }
         .popup-hint-btn:hover { background: var(--cell-border-active); color: #fff; }
+        .popup-hint-btn:disabled { opacity: 0.5; cursor: default; }
+        .popup-hint-btn:disabled:hover { background: var(--cell-active); color: var(--primary); }
         .hint-back-btn {
             background: none; border: none; color: var(--text-muted); font-size: 0.85rem;
             font-weight: 700; cursor: pointer; font-family: inherit; padding: 0; margin-bottom: 8px;
@@ -2089,8 +2091,11 @@ function renderPopup() {
 
     if (!roomMode) {
         // ── Hint entry button — at the very bottom of the Found list (no hints in VS) ──
+        // Once the board is fully solved there's nothing left to hint, so disable it.
+        const won = validWords.size > 0 && foundWords.size >= validWords.size;
         const hb=document.createElement('button'); hb.className='popup-hint-btn'; hb.textContent='💡 Hint';
-        hb.onclick=(ev)=>{ ev.stopPropagation(); hintScreen='menu'; renderPopup(); };
+        hb.disabled = won;
+        if (!won) hb.onclick=(ev)=>{ ev.stopPropagation(); hintScreen='menu'; renderPopup(); };
         popup.appendChild(hb);
 
         const rb=document.createElement('button'); rb.className='popup-reset'; rb.textContent='Reset Progress';
