@@ -1168,6 +1168,9 @@ function loadCachedDailyConfig(date) {
     try {
         const c = JSON.parse(localStorage.getItem(DAILY_CFG_CACHE_KEY) || 'null');
         if (!c || c.date !== date) return false;
+        // Reject a cache that's missing the board grid — accepting it would crash
+        // renderBoard/calculateValidWords and leave the page stuck on a blank board.
+        if (!Array.isArray(c.cells) || !c.rows || !c.cols) return false;
         boardRows = c.rows; boardCols = c.cols; boardCells = c.cells;
         preloadedWords = c.words?.length ? new Set(c.words) : null;
         preloadedBonusWords = c.bonusWords?.length ? new Set(c.bonusWords) : null;
@@ -1186,13 +1189,23 @@ function saveProgress() {
     if (answersRevealed) localStorage.setItem(`G2_answers_${h}`, '1');
     localStorage.setItem(`G2_hints_used_${h}`, JSON.stringify([...hintsUsed]));
 }
+// Safely parse a localStorage value. If it's missing or corrupt, drop the bad
+// key and return `fallback` — so stale/garbled saved data can never throw and
+// leave init half-finished (the cause of a permanent blank board).
+function safeLoadJSON(key, fallback) {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    try { return JSON.parse(raw); }
+    catch { try { localStorage.removeItem(key); } catch {} return fallback; }
+}
+
 function loadProgress() {
     const h = getBoardHash();
-    foundWords = new Set(JSON.parse(localStorage.getItem(`G2_found_${h}`) || '[]'));
-    foundBonusWords = new Set(JSON.parse(localStorage.getItem(`G2_bonus_found_${h}`) || '[]'));
+    foundWords = new Set(safeLoadJSON(`G2_found_${h}`, []));
+    foundBonusWords = new Set(safeLoadJSON(`G2_bonus_found_${h}`, []));
     answersRevealed = localStorage.getItem(`G2_answers_${h}`) === '1';
-    hintsUsed = new Set(JSON.parse(localStorage.getItem(`G2_hints_used_${h}`) || '[]'));
-    const saved = JSON.parse(localStorage.getItem(`G2_timer_${h}`) || '{}');
+    hintsUsed = new Set(safeLoadJSON(`G2_hints_used_${h}`, []));
+    const saved = safeLoadJSON(`G2_timer_${h}`, {});
     timerSeconds = saved.s || 0;
     updateTimerDisplay();
     if (saved.started) {
@@ -1411,25 +1424,63 @@ window.addEventListener('DOMContentLoaded', async () => {
     // word list), render it instantly with NO overlay and NO network. Only show the
     // "loading" overlay on a genuine first/cold load where there's nothing to show yet.
     const loader = document.getElementById('loader');
-    const cachedToday = loadCachedDailyConfig(getPuzzleDate());
-    if (cachedToday && preloadedWords) {
-        loader.style.display = 'none';
-        loadProgress();
-        calculateValidWords();
-        localStorage.setItem(`G2_total_${getBoardHash()}`, validWords.size);
-        renderBoard();
-        updateAnswerRevealSection();
-        refreshBoardConfigInBackground(); // quietly re-sync from Firebase
-    } else {
-        // Cold load — keep the overlay up while we fetch the board (and dict if needed).
-        await loadBoardConfig();
-        if (!preloadedWords) await loadDictionary();
-        loadProgress();
-        calculateValidWords();
-        if (currentBoardDate) localStorage.setItem(`G2_total_${getBoardHash()}`, validWords.size);
-        renderBoard();
-        loader.style.display = 'none';
-        updateAnswerRevealSection();
+    try {
+        const cachedToday = loadCachedDailyConfig(getPuzzleDate());
+        if (cachedToday && preloadedWords) {
+            loader.style.display = 'none';
+            loadProgress();
+            calculateValidWords();
+            localStorage.setItem(`G2_total_${getBoardHash()}`, validWords.size);
+            renderBoard();
+            updateAnswerRevealSection();
+            refreshBoardConfigInBackground(); // quietly re-sync from Firebase
+        } else {
+            // Cold load — keep the overlay up while we fetch the board (and dict if needed).
+            await loadBoardConfig();
+            if (!preloadedWords) await loadDictionary();
+            loadProgress();
+            calculateValidWords();
+            if (currentBoardDate) localStorage.setItem(`G2_total_${getBoardHash()}`, validWords.size);
+            renderBoard();
+            loader.style.display = 'none';
+            updateAnswerRevealSection();
+        }
+    } catch (err) {
+        // Init crashed — almost always corrupt/stale localStorage (an old app version's
+        // saved data). Rather than leave the loader up forever (a permanent blank screen),
+        // self-heal: wipe this app's saved state and the cached board, then retry a clean
+        // cold load. If THAT fails too, show an actionable message instead of nothing.
+        console.error('Init failed, attempting recovery:', err);
+        if (!window.__gobRecovered) {
+            window.__gobRecovered = true;
+            try {
+                for (let i = localStorage.length - 1; i >= 0; i--) {
+                    const k = localStorage.key(i);
+                    if (k && (k.startsWith('G2_') || k === 'gob_pid')) localStorage.removeItem(k);
+                }
+            } catch {}
+            // Reset in-memory state the failed run may have half-populated.
+            preloadedWords = null; preloadedBonusWords = null; currentBoardDate = null;
+            try {
+                await loadBoardConfig();
+                if (!preloadedWords) await loadDictionary();
+                loadProgress();
+                calculateValidWords();
+                if (currentBoardDate) localStorage.setItem(`G2_total_${getBoardHash()}`, validWords.size);
+                renderBoard();
+                loader.style.display = 'none';
+                updateAnswerRevealSection();
+            } catch (err2) {
+                console.error('Recovery failed:', err2);
+                loader.innerHTML =
+                    '<p style="font-weight:700;color:var(--error);text-align:center;padding:20px">'
+                    + 'Something went wrong loading the game.<br>Please close this tab and reopen it.</p>';
+            }
+        } else {
+            loader.innerHTML =
+                '<p style="font-weight:700;color:var(--error);text-align:center;padding:20px">'
+                + 'Something went wrong loading the game.<br>Please close this tab and reopen it.</p>';
+        }
     }
 
     function closePopupIfOutside(target) {
