@@ -1680,7 +1680,13 @@ function handleRoomUpdate(data) {
     } else if (data.state === 'finished') {
         const myPlayer = data.players?.[playerId];
         const didPlayRound = myPlayer?.rounds?.[data.currentRound ?? 0] != null;
-        if (!didPlayRound || myPlayer?.closedScoreboard) {
+        // A client whose own round-score write hasn't propagated yet still has
+        // didPlayRound===false the instant another player's countdown flips the
+        // state to 'finished'. Treat "was actively playing this round" (game
+        // initialized, scoreboard not yet dismissed) as having played, so we go
+        // straight to the scoreboard instead of flashing the lobby first.
+        const wasPlaying = roomPlayingInitialized && !myPlayer?.closedScoreboard;
+        if (myPlayer?.closedScoreboard || (!didPlayRound && !wasPlaying)) {
             showPanel('lobby');
             renderLobby(data);
             checkAutoStart(data);
@@ -1974,14 +1980,18 @@ async function awardGamePoints() {
             const data = snap.val();
             if (!data) return;
             const players = data.players || {};
-            let maxScore=-1, winnerId=null;
-            for (const [pid,p] of Object.entries(players)) {
+            let maxScore=-1;
+            for (const p of Object.values(players)) {
                 const sc = p.rounds?.[round]?.score ?? -1;
-                if (sc > maxScore) { maxScore=sc; winnerId=pid; }
+                if (sc > maxScore) maxScore = sc;
             }
-            if (winnerId && maxScore >= 0)
-                await roomRef.child(`players/${winnerId}/gamePoints`).transaction(p=>(p||0)+1);
-            await roomRef.child(`pointsRound${round}`).set(`done:${winnerId||'none'}`);
+            // On a tie for the top score, every tied player gets a round-point.
+            const winners = maxScore >= 0
+                ? Object.keys(players).filter(pid => (players[pid].rounds?.[round]?.score ?? -1) === maxScore)
+                : [];
+            for (const pid of winners)
+                await roomRef.child(`players/${pid}/gamePoints`).transaction(p=>(p||0)+1);
+            await roomRef.child(`pointsRound${round}`).set(`done:${winners.join(',')||'none'}`);
         }
     );
 }
@@ -2022,9 +2032,11 @@ function renderScoreboard(data) {
         sb.appendChild(loader);
     }
 
+    const topPoints = entries[0]?.gamePoints || 0;
     entries.forEach((e,i) => {
         const row=document.createElement('div');
-        row.className='score-row'+(i===0&&pointsDone?' gold':'');
+        // Gold every co-leader (tied for most points), not just the first row.
+        row.className='score-row'+(pointsDone && e.gamePoints>0 && e.gamePoints===topPoints?' gold':'');
         row.innerHTML=`<span class="score-name">${e.name}</span>
             <span class="score-gp">${e.gamePoints} pt${e.gamePoints!==1?'s':''}</span>
             <span class="score-rnd">${e.roundScore!==null?'+'+e.roundScore:'…'}</span>`;
