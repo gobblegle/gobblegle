@@ -599,6 +599,11 @@ let roomMode = false, roomId = null, playerId = null;
 let roomFoundWords = new Set(), roomRef = null;
 let roomCurrentRound = 0, roomLastPlayedRound = -1, roomScoreSubmitted = false;
 let roomPlayingInitialized = false, scoreBoardShown = false;
+// Round whose scoreboard THIS client has dismissed locally. The server flag
+// closedScoreboard can be transiently re-set to false by other players' writes
+// during the post-round storm (4-player races), so we keep a local, terminal
+// record of "I closed this round's scoreboard" that survives those bounces.
+let roomScoreboardClosedRound = -1;
 let roomCountdownInterval = null;
 let startCountdownInterval = null;     // local ticker for the pre-game "starting in N…" dialog
 let startCountdownData = null;         // latest room snapshot, for the host's start decision
@@ -2550,6 +2555,7 @@ function handleRoomUpdate(data) {
     if (data.state === 'lobby') {
         roomPlayingInitialized = false;
         scoreBoardShown = false;
+        roomScoreboardClosedRound = -1;
         showPanel('lobby');
         renderLobby(data);
         checkAutoStart(data);
@@ -2558,11 +2564,18 @@ function handleRoomUpdate(data) {
         if (data.currentRound !== roomCurrentRound) {
             roomPlayingInitialized = false;
             scoreBoardShown = false;
+            roomScoreboardClosedRound = -1;
         }
-        // If I just (re)connected and I'm the only online player, everyone left — cancel game
+        // If I'm the only online player AND the round has already expired, this is a
+        // stale/abandoned game (everyone left long ago) — bounce back to the lobby rather
+        // than drop into a dead round. A live round, including a freshly-started solo
+        // game, is allowed to play on so a single player can play by themselves.
         if (!roomPlayingInitialized) {
             const onlinePlayers = Object.entries(data.players || {}).filter(([,p]) => p.online !== false);
-            if (onlinePlayers.every(([pid]) => pid === playerId)) {
+            const aloneOnline   = onlinePlayers.every(([pid]) => pid === playerId);
+            const durationMs     = (data.settings?.minutes || 3) * 60000;
+            const roundExpired   = data.startedAt && (data.startedAt + durationMs) < Date.now();
+            if (aloneOnline && roundExpired) {
                 roomRef.update({ state: 'lobby' });
                 return;
             }
@@ -2583,7 +2596,10 @@ function handleRoomUpdate(data) {
         // initialized, scoreboard not yet dismissed) as having played, so we go
         // straight to the scoreboard instead of flashing the lobby first.
         const wasPlaying = roomPlayingInitialized && !myPlayer?.closedScoreboard;
-        if (myPlayer?.closedScoreboard || (!didPlayRound && !wasPlaying)) {
+        // Treat a local dismissal of this round's scoreboard as authoritative, even
+        // if a racing write briefly flipped the server flag back to false.
+        const dismissedLocally = roomScoreboardClosedRound === (data.currentRound ?? 0);
+        if (myPlayer?.closedScoreboard || dismissedLocally || (!didPlayRound && !wasPlaying)) {
             showPanel('lobby');
             renderLobby(data);
             checkAutoStart(data);
@@ -3133,12 +3149,16 @@ function openPlayerModal(name, foundWordsArr, bonusWordsArr) {
 
 async function closeScoreboard() {
     document.getElementById('player-modal-overlay')?.remove();
+    roomScoreboardClosedRound = roomCurrentRound; // terminal: don't re-show this round's scoreboard
     roomPlayingInitialized=false; scoreBoardShown=false; roomScoreSubmitted=false;
     roomLastPlayedRound = roomCurrentRound;
-    await roomRef.update({
-        [`players/${playerId}/closedScoreboard`]: true,
-        [`players/${playerId}/ready`]: false
-    });
+    showPanel('lobby'); // hide now; don't wait for the Firebase round-trip to route us back
+    try {
+        await roomRef.update({
+            [`players/${playerId}/closedScoreboard`]: true,
+            [`players/${playerId}/ready`]: false
+        });
+    } catch { /* local flag + optimistic hide keep the UI correct; listener reconciles on reconnect */ }
 }
 
 async function leaveRoom() {
@@ -3155,7 +3175,7 @@ async function leaveRoom() {
     // Reset room state
     roomMode=false; roomId=null; roomFoundWords=new Set(); preloadedWords=null;
     roomPlayingInitialized=false; scoreBoardShown=false; roomScoreSubmitted=false;
-    roomLastPlayedRound=-1;
+    roomLastPlayedRound=-1; roomScoreboardClosedRound=-1;
 
     history.replaceState({}, '', location.pathname);
 
