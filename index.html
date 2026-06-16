@@ -428,7 +428,7 @@
     <span class="room-code-label" id="room-code-label"></span>
     <div style="display:flex;gap:8px">
         <button class="bar-btn bar-btn-primary" onclick="shareRoom()">Share</button>
-        <button class="bar-btn bar-btn-sec"     onclick="leaveRoom()">Leave</button>
+        <button class="bar-btn bar-btn-sec"     onclick="backToLobby()">Back to Lobby</button>
     </div>
 </div>
 
@@ -2586,6 +2586,14 @@ function handleRoomUpdate(data) {
             renderLobby(data);
             return;
         }
+        // I hit "Back to Lobby" this round: stay in the lobby (forfeit), don't get
+        // pulled back into the live board. No checkAutoStart here — a new game can't
+        // start while a round is still active.
+        if (data.players[playerId]?.bailedRound === data.currentRound) {
+            showPanel('lobby');
+            renderLobby(data);
+            return;
+        }
         if (!roomPlayingInitialized && data.currentRound > roomLastPlayedRound) renderRoomPlaying(data);
     } else if (data.state === 'finished') {
         const myPlayer = data.players?.[playerId];
@@ -2895,6 +2903,7 @@ async function autoStartGame(data) {
             for (const pid of Object.keys(d.players || {})) {
                 updates[`players/${pid}/closedScoreboard`] = false;
                 updates[`players/${pid}/ready`] = false;
+                updates[`players/${pid}/bailedRound`] = null;
             }
             await roomRef.update(updates);
         }
@@ -2908,6 +2917,10 @@ function renderRoomPlaying(data) {
     const durationMs = (data.settings?.minutes || 3) * 60000;
     if (data.startedAt && (data.startedAt + durationMs) < Date.now()) return;
     roomPlayingInitialized = true;
+
+    // Record that I'm actively in this round, so "Back to Lobby" can tell who's
+    // still playing (vs. who bailed or joined late and is only watching the lobby).
+    roomRef.child(`players/${playerId}`).update({ playingRound: data.currentRound ?? 0 });
 
     showPanel('game');
 
@@ -2976,7 +2989,7 @@ function waitForAllScores(round) {
         const bail = setTimeout(() => { ref.off('value', check); resolve(); }, 5000);
         function check(snap) {
             const players = snap.val() || {};
-            const online = Object.values(players).filter(p => p.online !== false && !p.skipping);
+            const online = Object.values(players).filter(p => p.online !== false && !p.skipping && p.bailedRound !== round);
             if (online.length > 0 && online.every(p => p.rounds?.[round]?.score != null)) {
                 clearTimeout(bail);
                 ref.off('value', check);
@@ -3159,6 +3172,31 @@ async function closeScoreboard() {
             [`players/${playerId}/ready`]: false
         });
     } catch { /* local flag + optimistic hide keep the UI correct; listener reconciles on reconnect */ }
+}
+
+// "Back to Lobby" during an active round: forfeit the round and return to the
+// room lobby WITHOUT leaving the room. A new game can't start while the round is
+// still live, but if this was the last active player, the round is cancelled so
+// the group can set up a fresh game (the "everyone bail to cancel" escape hatch).
+async function backToLobby() {
+    const round = roomCurrentRound;
+    if (roomCountdownInterval) { clearInterval(roomCountdownInterval); roomCountdownInterval=null; }
+    roomPlayingInitialized=false; scoreBoardShown=false; roomScoreSubmitted=false;
+    roomScoreboardClosedRound=-1;
+    roomLastPlayedRound = round;   // don't let a stray 'playing' update bounce me back in
+    showPanel('lobby');            // optimistic: leave the game view immediately
+    try {
+        await roomRef.update({
+            [`players/${playerId}/bailedRound`]: round,
+            [`players/${playerId}/ready`]: false
+        });
+        // If nobody is still actively playing this round, cancel it back to the lobby.
+        const players = (await roomRef.child('players').once('value')).val() || {};
+        const stillActive = Object.values(players).some(p =>
+            p.online !== false && p.playingRound === round &&
+            p.bailedRound !== round && p.rounds?.[round]?.score == null);
+        if (!stillActive) roomRef.child('state').transaction(cur => cur === 'playing' ? 'lobby' : undefined);
+    } catch { /* listener reconciles on reconnect */ }
 }
 
 async function leaveRoom() {
