@@ -114,11 +114,15 @@
         }
         .score-btn:hover { background: var(--cell-border-active); color: #fff; }
         .word-popup {
-            position: absolute; top: calc(100% + 6px); left: 0;
+            /* Centered modal dialog. The huge first box-shadow ring dims the page
+               behind it (no separate backdrop element needed); clicking that dimmed
+               area counts as "outside" and closes the popup via the global handler. */
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
             background: var(--surface); border: 1px solid var(--border);
-            border-radius: 12px; padding: 12px 14px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
-            min-width: 230px; max-height: 60vh; overflow-y: auto; z-index: 60;
+            border-radius: 14px; padding: 16px 18px;
+            box-shadow: 0 0 0 100vmax rgba(0,0,0,0.45), 0 18px 50px rgba(0,0,0,0.35);
+            width: min(460px, 92vw); max-height: 82vh;
+            display: flex; flex-direction: column; z-index: 60;
         }
         .popup-section { border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 4px; }
         .popup-section:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
@@ -137,7 +141,9 @@
         .popup-words.column { flex-direction: column; flex-wrap: nowrap; gap: 2px; }
         .popup-chip { color: var(--text); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
         .popup-remaining { font-size: 0.75rem; color: var(--text-muted); padding: 2px 0 0; font-style: italic; }
-        .popup-views { display: flex; gap: 6px; margin-bottom: 8px; }
+        .popup-views { display: flex; gap: 6px; margin-bottom: 10px; flex-shrink: 0; }
+        /* Scrolls under the pinned view-toggle bar so the ordering buttons stay put. */
+        .popup-body { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
         .popup-view-btn {
             flex: 1; padding: 4px 0; border: 1px solid var(--border); border-radius: 8px;
             background: none; color: var(--text-muted); font-size: 0.8rem; font-weight: 700;
@@ -2106,17 +2112,22 @@ function togglePopup(e) {
     if (popup.style.display !== 'none') { popup.style.display='none'; return; }
     hintScreen = null; // always open on the normal Found view
     renderPopup();
-    popup.style.display='block';
+    popup.style.display='flex';
 }
 
 function renderPopup() {
     const popup = document.getElementById('word-popup');
     popup.innerHTML='';
 
-    // Hint screens replace the normal Found view entirely (solo only).
-    if (!roomMode && hintScreen) { renderHintScreen(popup); return; }
+    // Everything except the view-toggle bar lives in this scroller, so the
+    // ordering buttons (# / ABC / 🕐) stay pinned at the top of the dialog
+    // while the word list scrolls underneath them.
+    const body = document.createElement('div'); body.className='popup-body';
 
-    // ── View toggle buttons ───────────────────────────────────────────────────
+    // Hint screens replace the normal Found view entirely (solo only).
+    if (!roomMode && hintScreen) { renderHintScreen(body); popup.appendChild(body); return; }
+
+    // ── View toggle buttons (persistent header) ───────────────────────────────
     const views = document.createElement('div'); views.className='popup-views';
     [['len','#'],['abc','ABC'],['time','🕐']].forEach(([mode,label]) => {
         const btn=document.createElement('button');
@@ -2127,8 +2138,8 @@ function renderPopup() {
     });
     popup.appendChild(views);
 
-    if (popupView === 'len') renderPopupByLength(popup);
-    else                     renderPopupFlat(popup);
+    if (popupView === 'len') renderPopupByLength(body);
+    else                     renderPopupFlat(body);
 
     if (!roomMode) {
         // ── Hint entry button — at the very bottom of the Found list (no hints in VS) ──
@@ -2137,7 +2148,7 @@ function renderPopup() {
         const hb=document.createElement('button'); hb.className='popup-hint-btn'; hb.textContent='💡 Hint';
         hb.disabled = won;
         if (!won) hb.onclick=(ev)=>{ ev.stopPropagation(); hintScreen='menu'; renderPopup(); };
-        popup.appendChild(hb);
+        body.appendChild(hb);
 
         const rb=document.createElement('button'); rb.className='popup-reset'; rb.textContent='Reset Progress';
         let resetArmed=false;
@@ -2153,8 +2164,10 @@ function renderPopup() {
             resetProgress();
             popup.style.display='none';
         };
-        popup.appendChild(rb);
+        body.appendChild(rb);
     }
+
+    popup.appendChild(body);
 }
 
 // ── Hint panel ──────────────────────────────────────────────────────────────

@@ -16,6 +16,24 @@
             --cell-active: #ffedd5;
             --cell-border-active: #fb923c;
             --error: #c9605a;
+            --exhausted-text: #c0c0c0;
+            --exhausted-border: #ede5dc;
+        }
+        /* Dark theme — mirrors the main page (index.html). Shared global preference
+           via the G2_dark_mode localStorage key. */
+        body.dark {
+            --primary: #e07a4b;
+            --primary-hover: #c2603a;
+            --bg: #1c1512;
+            --surface: #2a211c;
+            --text: #f0e6dd;
+            --text-muted: #b09a86;
+            --border: #463a31;
+            --cell-active: #4a3322;
+            --cell-border-active: #c2603a;
+            --error: #d8736c;
+            --exhausted-text: #6b5d50;
+            --exhausted-border: #3a2f27;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -27,7 +45,17 @@
             width: 100%; max-width: 540px; padding: 14px 16px;
             display: flex; justify-content: center; align-items: center; gap: 12px;
             border-bottom: 1px solid var(--border); background: var(--surface);
+            position: relative;
         }
+        .theme-toggle {
+            position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+            background: var(--cell-active); color: var(--primary);
+            border: 1px solid var(--cell-border-active);
+            width: 38px; height: 38px; border-radius: 10px;
+            font-size: 1.2rem; cursor: pointer; line-height: 1;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .theme-toggle:hover { background: var(--cell-border-active); }
         .header-title { display: flex; align-items: center; gap: 8px; }
         .header-title img { height: 38px; width: auto; display: block; }
         .editor-badge {
@@ -82,6 +110,7 @@
             text-align: center; text-transform: uppercase;
             background: var(--bg); color: var(--text); outline: none;
         }
+        .editor-table input.exhausted { color: var(--exhausted-text); border-color: var(--exhausted-border); }
         .editor-table input:focus { border-color: var(--primary); background: var(--cell-active); }
 
         .actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
@@ -189,6 +218,10 @@
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 </head>
 <body>
+<script>
+    // Apply saved dark-mode preference immediately to avoid a flash of light theme.
+    try { if (localStorage.getItem('G2_dark_mode') === '1') document.body.classList.add('dark'); } catch {}
+</script>
 
 <header>
     <div class="header-title">
@@ -196,6 +229,7 @@
         <img src="gobblegletitle.png" alt="Gobblegle">
     </div>
     <span class="editor-badge">Board Editor</span>
+    <button class="theme-toggle" id="theme-toggle-btn" onclick="toggleDarkMode()" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
 </header>
 
 <div class="page">
@@ -334,6 +368,20 @@
 <script>
 let editorRows = 5, editorCols = 5;
 
+// ── Dark mode (shared global preference with the main page) ──────────────────
+function setDarkMode(on) {
+    document.body.classList.toggle('dark', on);
+    try { localStorage.setItem('G2_dark_mode', on ? '1' : '0'); } catch {}
+    const btn = document.getElementById('theme-toggle-btn');
+    if (btn) btn.textContent = on ? '☀️' : '🌙';
+}
+function toggleDarkMode() { setDarkMode(!document.body.classList.contains('dark')); }
+// Reflect the already-applied preference on the toggle icon at startup.
+document.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('theme-toggle-btn');
+    if (btn) btn.textContent = document.body.classList.contains('dark') ? '☀️' : '🌙';
+});
+
 const firebaseConfig = {
     apiKey: "AIzaSyC5l8bUB0Yf4SofYtIl0l3vQY8qw3wVflA",
     authDomain: "gobblegle.firebaseapp.com",
@@ -349,7 +397,18 @@ try { firebase.initializeApp(firebaseConfig); db = firebase.database(); } catch(
 window.addEventListener('DOMContentLoaded', async () => {
     await loadWordSelections();
     await loadWordApprovals();
-    initSchedCalendar(); // async in background — don't block editor startup
+    // Awaited (was fire-and-forget) so edAvailDates is populated before we decide
+    // what to open. The calendar pre-selects today (edSelectedDate defaults to it).
+    await initSchedCalendar();
+
+    // Default to today's scheduled puzzle — same board you'd get by clicking
+    // "today" in the calendar — so the editor opens on the live daily board
+    // instead of a stale default that needs a manual day-click to refresh.
+    const today = _puzzleToday();
+    if (db && edAvailDates && edAvailDates[today]) {
+        await _loadDailyBoardIntoEditor(today);
+        return;
+    }
     try {
         if (db) {
             const snap = await db.ref('boardConfig').once('value');
@@ -372,9 +431,28 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ── Scheduled boards calendar ──────────────────────────────────────────────
-let edSelectedDate = new Date().toISOString().slice(0, 10);
-let edCalendarYear  = new Date().getFullYear();
-let edCalendarMonth = new Date().getMonth();
+// "Today" as the GAME defines it: America/New_York wall clock with a 5 AM
+// rollover (mirrors getPuzzleDate() in index.html). The editor must use the
+// SAME definition so it opens/saves the board that's actually live in the game,
+// regardless of the editor's own timezone. (UTC via toISOString rolls a day
+// early in the evening for users west of UTC, which silently breaks this.)
+// Returns YYYY-MM-DD.
+function _puzzleToday() {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York',
+        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false
+    }).formatToParts(new Date());
+    const get = t => parts.find(p => p.type === t).value;
+    let y = +get('year'), m = +get('month'), d = +get('day');
+    let hour = +get('hour');
+    if (hour === 24) hour = 0;
+    const nyMidnight = new Date(Date.UTC(y, m - 1, d));
+    if (hour < 5) nyMidnight.setUTCDate(nyMidnight.getUTCDate() - 1); // before 5 AM ET → previous day
+    return nyMidnight.toISOString().slice(0, 10);
+}
+let edSelectedDate  = _puzzleToday();
+let edCalendarYear  = +edSelectedDate.slice(0, 4);
+let edCalendarMonth = +edSelectedDate.slice(5, 7) - 1; // show the month that contains "today"
 let edAvailDates    = null; // cached after first fetch
 
 async function initSchedCalendar() {
@@ -396,7 +474,7 @@ function renderSchedCalendar() {
     if (labelEl) labelEl.textContent = d.toLocaleString('default', { month: 'long', year: 'numeric' });
     container.innerHTML = '';
 
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = _puzzleToday();
     const daysInMonth = new Date(edCalendarYear, edCalendarMonth + 1, 0).getDate();
 
     const dayHdr = document.createElement('div');
@@ -521,7 +599,7 @@ async function saveBoard() {
         await db.ref(`dailyBoards/${edSelectedDate}`).set(payload);
         await db.ref(`dailyBoardDates/${edSelectedDate}`).set(true);
         if (edAvailDates) edAvailDates[edSelectedDate] = true; // update local cache
-        const today = new Date().toISOString().slice(0, 10);
+        const today = _puzzleToday();
         if (edSelectedDate === today) await db.ref('boardConfig').set(payload);
         showStatus(`Saved for ${edSelectedDate}!`, 'ok');
         renderSchedCalendar();
@@ -935,6 +1013,7 @@ function puzzleCustomAddWord() {
         _edCurrentWords.push(word);
     }
     renderPuzzleCustomList();
+    _edUpdateUnusedTiles();
     const body = document.getElementById('puzzle-custom-body');
     body.scrollTop = body.scrollHeight;
 }
@@ -988,6 +1067,7 @@ function renderPuzzleCustomList() {
             const nowIn = _edPuzzleToggle(word);
             rbtn.className = 'ws-btn ws-btn-blue' + (nowIn ? '' : ' active');
             wspan.style.textDecoration = nowIn ? '' : 'line-through';
+            _edUpdateUnusedTiles();
         };
 
         row.appendChild(wspan); row.appendChild(gbtn); row.appendChild(rbtn);
@@ -1028,6 +1108,30 @@ function edCanSpell(word, cells, rows, cols) {
     for (let r=0;r<rows;r++) for (let c=0;c<cols;c++)
         if (cells[r]?.[c] === word[0] && dfs(0,r,c)) return true;
     return false;
+}
+
+// First spellable path for `word` as cell indices (r*cols+c), or null.
+function _edFirstPath(word, cells, rows, cols) {
+    function dfs(idx, r, c, path) {
+        if (idx === word.length) return path.slice();
+        for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++) {
+            if (!dr && !dc) continue;
+            const nr=r+dr, nc=c+dc;
+            if (nr>=0&&nr<rows&&nc>=0&&nc<cols&&cells[nr]?.[nc]===word[idx]) {
+                path.push(nr*cols+nc);
+                const res=dfs(idx+1, nr, nc, path);
+                if (res) return res;
+                path.pop();
+            }
+        }
+        return null;
+    }
+    for (let r=0;r<rows;r++) for (let c=0;c<cols;c++)
+        if (cells[r]?.[c] === word[0]) {
+            const res = dfs(1, r, c, [r*cols+c]);
+            if (res) return res;
+        }
+    return null;
 }
 
 function scheduleWordCount() {
@@ -1109,11 +1213,30 @@ function _resetPuzzleCustomizations(cfg) {
     for (const w of _edPuzzleCustom) if (!_edAddedWords.includes(w)) _edAddedWords.push(w);
 }
 
+// Gray any filled cell that no active puzzle word passes through — mirrors the
+// `exhausted` styling players see in the real game / test mode.
+function _edUpdateUnusedTiles() {
+    const table = document.getElementById('editor-table');
+    if (!table) return;
+    const { cells } = readCells();
+    const used = new Set();
+    for (const w of _edActivePuzzleWords()) {
+        const path = _edFirstPath(w, cells, editorRows, editorCols);
+        if (path) for (const k of path) used.add(k);
+    }
+    for (let r=0; r<editorRows; r++) for (let c=0; c<editorCols; c++) {
+        const inp = table.querySelector(`input[data-r="${r}"][data-c="${c}"]`);
+        if (!inp) continue;
+        const hasLetter = !!cells[r]?.[c];
+        inp.classList.toggle('exhausted', hasLetter && !used.has(r*editorCols+c));
+    }
+}
+
 function updateWordCount() {
     const el = document.getElementById('word-count');
-    if (!edDict) { el.textContent = '—'; _edCurrentWords = []; renderWordList(); return; }
+    if (!edDict) { el.textContent = '—'; _edCurrentWords = []; renderWordList(); _edUpdateUnusedTiles(); return; }
     const { cells, hasAny } = readCells();
-    if (!hasAny || !isConnected(cells, editorRows, editorCols)) { el.textContent = '—'; _edCurrentWords = []; renderWordList(); return; }
+    if (!hasAny || !isConnected(cells, editorRows, editorCols)) { el.textContent = '—'; _edCurrentWords = []; renderWordList(); _edUpdateUnusedTiles(); return; }
     const ls = new Set();
     for (let r=0;r<editorRows;r++) for (let c=0;c<editorCols;c++) if (cells[r]?.[c]) ls.add(cells[r][c]);
     const words = [];
@@ -1133,6 +1256,7 @@ function updateWordCount() {
     _edCurrentWords = words;
     el.textContent = _edActivePuzzleWords().length.toLocaleString();
     renderWordList();
+    _edUpdateUnusedTiles();
 }
 
 function renderWordList() {

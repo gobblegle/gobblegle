@@ -25,6 +25,31 @@
             --cell-active: #ffedd5;
             --cell-border-active: #fb923c;
             --error: #c9605a;
+            /* tile/text colors that differ between themes */
+            --tile-bg: #ffffff;
+            --word-default: #3a3a3a;
+            --word-already: #94a3b8;
+            --exhausted-text: #c0c0c0;
+            --exhausted-border: #ede5dc;
+        }
+        /* Dark theme — mirrors the main page (index.html). Shared global preference
+           via the G2_dark_mode localStorage key. */
+        body.dark {
+            --primary: #e07a4b;
+            --primary-hover: #c2603a;
+            --bg: #1c1512;
+            --surface: #2a211c;
+            --text: #f0e6dd;
+            --text-muted: #b09a86;
+            --border: #463a31;
+            --cell-active: #4a3322;
+            --cell-border-active: #c2603a;
+            --error: #d8736c;
+            --tile-bg: #33281f;
+            --word-default: #d8cabd;
+            --word-already: #7c6f64;
+            --exhausted-text: #6b5d50;
+            --exhausted-border: #3a2f27;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
         body {
@@ -53,6 +78,15 @@
             line-height: 1;
         }
         .room-create-btn:hover { background: var(--cell-border-active); color: #fff; }
+        .theme-toggle {
+            position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+            background: var(--cell-active); color: var(--primary);
+            border: 1px solid var(--cell-border-active);
+            width: 38px; height: 38px; border-radius: 10px;
+            font-size: 1.2rem; cursor: pointer; line-height: 1;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .theme-toggle:hover { background: var(--cell-border-active); }
 
         /* ── Room bar (shown during room game play) ── */
         .room-bar {
@@ -102,7 +136,7 @@
             color: var(--text-muted); font-size: 0.85rem; font-weight: 600;
             cursor: pointer; text-align: center; font-family: inherit;
         }
-        .popup-reset:hover { background: #fff1f1; color: var(--error); border-color: var(--error); }
+        .popup-reset:hover { background: var(--cell-active); color: var(--error); border-color: var(--error); }
         .popup-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 0.9rem; }
         .popup-label { font-weight: 600; color: var(--text-muted); }
         .popup-count { font-weight: 700; color: var(--primary); }
@@ -112,12 +146,12 @@
         .current-word {
             min-height: 46px; display: flex; align-items: center;
             justify-content: center; font-size: 1.9rem; font-weight: 800;
-            letter-spacing: 0.1em; color: #3a3a3a;
+            letter-spacing: 0.1em; color: var(--word-default);
             background: var(--surface); border-radius: 12px;
         }
         .current-word.found    { color: #22c55e; }
-        .current-word.already  { color: #94a3b8; }
-        .current-word.bonus    { color: #94a3b8; }
+        .current-word.already  { color: var(--word-already); }
+        .current-word.bonus    { color: var(--word-already); }
         .current-word.error    { color: var(--error); }
         .current-word.small    { font-size: 1.1rem; }
         .current-word.settling { transition: opacity 0.6s ease; }
@@ -128,7 +162,7 @@
         }
         .grid { display: grid; gap: 8px; }
         .grid-cell {
-            background: #fff; border: 2px solid var(--border); border-radius: 12px;
+            background: var(--tile-bg); border: 2px solid var(--border); border-radius: 12px;
             display: flex; align-items: center; justify-content: center;
             font-size: var(--cell-font, 2.5rem); font-weight: 700; text-transform: uppercase;
             width: var(--cell-size, 54px); height: var(--cell-size, 54px);
@@ -137,9 +171,9 @@
         }
         .grid-cell.active { background: var(--cell-active); border-color: var(--cell-border-active); transform: scale(0.93); }
         .grid-cell.empty  { background: transparent; border: none; pointer-events: none; }
-        .grid-cell.exhausted:not(.active) { color: #c0c0c0; border-color: #ede5dc; }
+        .grid-cell.exhausted:not(.active) { color: var(--exhausted-text); border-color: var(--exhausted-border); }
         .tile-hint-start { position:absolute; bottom:3px; left:4px; font-size:calc(var(--cell-font) * 0.3); font-weight:700; color:#fb923c; line-height:1; pointer-events:none; }
-        .tile-hint-usage { position:absolute; bottom:3px; right:4px; font-size:calc(var(--cell-font) * 0.3); font-weight:700; color:#94a3b8; line-height:1; pointer-events:none; }
+        .tile-hint-usage { position:absolute; bottom:3px; right:4px; font-size:calc(var(--cell-font) * 0.3); font-weight:700; color:var(--word-already); line-height:1; pointer-events:none; }
         .svg-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
 
         .timer { text-align: center; font-size: 1.1rem; font-weight: 700; color: var(--text-muted); letter-spacing: 0.12em; }
@@ -272,6 +306,10 @@
     </style>
 </head>
 <body>
+<script>
+    // Apply saved dark-mode preference immediately to avoid a flash of light theme.
+    try { if (localStorage.getItem('G2_dark_mode') === '1') document.body.classList.add('dark'); } catch {}
+</script>
 
 <div id="test-banner">
     Test Mode — board not saved &nbsp;·&nbsp; <a href="editor.html">← Back to Editor</a>
@@ -283,6 +321,7 @@
 </div>
 
 <header>
+    <button class="theme-toggle" id="theme-toggle-btn" onclick="toggleDarkMode()" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
     <div class="header-title">
         <div style="display:flex;align-items:center;gap:8px;">
             <img src="gobblegleturkey.png" alt="">
@@ -410,6 +449,20 @@
 </div>
 
 <script>
+// ── Dark mode (shared global preference with the main page) ──────────────────
+function setDarkMode(on) {
+    document.body.classList.toggle('dark', on);
+    try { localStorage.setItem('G2_dark_mode', on ? '1' : '0'); } catch {}
+    const btn = document.getElementById('theme-toggle-btn');
+    if (btn) btn.textContent = on ? '☀️' : '🌙';
+}
+function toggleDarkMode() { setDarkMode(!document.body.classList.contains('dark')); }
+// Reflect the already-applied preference on the toggle icon at startup.
+document.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('theme-toggle-btn');
+    if (btn) btn.textContent = document.body.classList.contains('dark') ? '☀️' : '🌙';
+});
+
 // ── Scoring table ──────────────────────────────────────────────────────────
 // index = word length; 4=3, 5=4, 6=6, 7=8, 8=11, 9=14, 10=18, 11=23, 12=29, 13=36, 14=44, 15=53, 16+=63
 const SCORE_TABLE = [0,0,0,0,3,4,6,8,11,14,18,23,29,36,44,53];
