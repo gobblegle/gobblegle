@@ -117,11 +117,13 @@
             /* Centered modal dialog. The huge first box-shadow ring dims the page
                behind it (no separate backdrop element needed); clicking that dimmed
                area counts as "outside" and closes the popup via the global handler. */
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            /* Sits a little above centre (48%) and capped a touch shorter (80vh)
+               so there's always an empty strip below the dialog to tap/click out. */
+            position: fixed; top: 48%; left: 50%; transform: translate(-50%, -50%);
             background: var(--surface); border: 1px solid var(--border);
             border-radius: 14px; padding: 16px 18px;
             box-shadow: 0 0 0 100vmax rgba(0,0,0,0.45), 0 18px 50px rgba(0,0,0,0.35);
-            width: min(460px, 92vw); max-height: 82vh;
+            width: min(460px, 92vw); max-height: 80vh;
             display: flex; flex-direction: column; z-index: 60;
         }
         .popup-section { border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 4px; }
@@ -129,24 +131,24 @@
         .popup-reset {
             display: block; width: 100%; margin-top: 10px; padding: 7px 0;
             background: none; border: 1px solid var(--border); border-radius: 8px;
-            color: var(--text-muted); font-size: 0.85rem; font-weight: 600;
+            color: var(--text-muted); font-size: 0.975rem; font-weight: 600;
             cursor: pointer; text-align: center; font-family: inherit;
         }
         .popup-reset:hover { background: var(--cell-active); color: var(--error); border-color: var(--error); }
         .popup-reset.confirm { background: var(--cell-active); color: var(--error); border-color: var(--error); }
-        .popup-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 0.9rem; }
+        .popup-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 1.025rem; }
         .popup-label { font-weight: 600; color: var(--text-muted); }
         .popup-count { font-weight: 700; color: var(--primary); }
         .popup-words { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 3px 0 6px; }
         .popup-words.column { flex-direction: column; flex-wrap: nowrap; gap: 2px; }
-        .popup-chip { color: var(--text); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
-        .popup-remaining { font-size: 0.75rem; color: var(--text-muted); padding: 2px 0 0; font-style: italic; }
+        .popup-chip { color: var(--text); font-size: 0.875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+        .popup-remaining { font-size: 0.875rem; color: var(--text-muted); padding: 2px 0 0; font-style: italic; }
         .popup-views { display: flex; gap: 6px; margin-bottom: 10px; flex-shrink: 0; }
         /* Scrolls under the pinned view-toggle bar so the ordering buttons stay put. */
         .popup-body { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
         .popup-view-btn {
             flex: 1; padding: 4px 0; border: 1px solid var(--border); border-radius: 8px;
-            background: none; color: var(--text-muted); font-size: 0.8rem; font-weight: 700;
+            background: none; color: var(--text-muted); font-size: 0.925rem; font-weight: 700;
             cursor: pointer; font-family: inherit; text-align: center;
         }
         .popup-view-btn:hover { background: var(--cell-active); }
@@ -156,22 +158,22 @@
         .popup-hint-btn {
             display: block; width: 100%; margin-top: 10px; padding: 9px 0;
             background: var(--cell-active); border: 1px solid var(--cell-border-active); border-radius: 8px;
-            color: var(--primary); font-size: 0.88rem; font-weight: 700;
+            color: var(--primary); font-size: 1.005rem; font-weight: 700;
             cursor: pointer; text-align: center; font-family: inherit;
         }
         .popup-hint-btn:hover { background: var(--cell-border-active); color: #fff; }
         .popup-hint-btn:disabled { opacity: 0.5; cursor: default; }
         .popup-hint-btn:disabled:hover { background: var(--cell-active); color: var(--primary); }
         .hint-back-btn {
-            background: none; border: none; color: var(--text-muted); font-size: 0.85rem;
+            background: none; border: none; color: var(--text-muted); font-size: 0.975rem;
             font-weight: 700; cursor: pointer; font-family: inherit; padding: 0; margin-bottom: 8px;
         }
         .hint-back-btn:hover { color: var(--primary); }
-        .hint-title { font-size: 0.9rem; font-weight: 800; color: var(--text); margin-bottom: 8px; }
+        .hint-title { font-size: 1.025rem; font-weight: 800; color: var(--text); margin-bottom: 8px; }
         .hint-option {
             display: block; width: 100%; margin-bottom: 7px; padding: 9px 12px;
             background: none; border: 1px solid var(--border); border-radius: 8px;
-            color: var(--text); font-size: 0.85rem; font-weight: 600;
+            color: var(--text); font-size: 0.975rem; font-weight: 600;
             cursor: pointer; text-align: left; font-family: inherit;
         }
         .hint-option:hover:not(:disabled) { background: var(--cell-active); border-color: var(--cell-border-active); color: var(--primary); }
@@ -179,11 +181,11 @@
         .hint-len-btn {
             display: inline-block; margin: 0 6px 6px 0; padding: 7px 14px;
             background: var(--cell-active); border: 1px solid var(--cell-border-active); border-radius: 8px;
-            color: var(--primary); font-size: 0.82rem; font-weight: 700;
+            color: var(--primary); font-size: 0.945rem; font-weight: 700;
             cursor: pointer; font-family: inherit;
         }
         .hint-len-btn:hover { background: var(--cell-border-active); color: #fff; }
-        .hint-note { font-size: 0.75rem; color: var(--text-muted); font-style: italic; padding: 2px 0 0; }
+        .hint-note { font-size: 0.875rem; color: var(--text-muted); font-style: italic; padding: 2px 0 0; }
 
         .answer-reveal-btn {
             display: block; width: 100%; padding: 8px 0;
@@ -2125,6 +2127,9 @@ function renderAnswerList(container) {
 // Which view the Found dialog uses: 'len' (grouped by length, default),
 // 'abc' (all found words alphabetically), 'time' (in order they were found).
 let popupView = 'len';
+// Remembered scroll offset of the word list so closing/reopening the dialog
+// keeps the player where they were (reset to top only when switching views).
+let popupScrollTop = 0;
 
 // Hint panel state. hintScreen: null (normal popup), 'menu', 'reveal',
 // 'alpha' (order alphabetical), 'first' (show first letter).
@@ -2142,8 +2147,10 @@ function togglePopup(e) {
     const popup = document.getElementById('word-popup');
     if (popup.style.display !== 'none') { popup.style.display='none'; return; }
     hintScreen = null; // always open on the normal Found view
-    renderPopup();
+    // Show first, then render: restoring the saved scroll only sticks once the
+    // dialog is visible (a display:none element can't be scrolled).
     popup.style.display='flex';
+    renderPopup();
 }
 
 function renderPopup() {
@@ -2154,9 +2161,11 @@ function renderPopup() {
     // ordering buttons (# / ABC / 🕐) stay pinned at the top of the dialog
     // while the word list scrolls underneath them.
     const body = document.createElement('div'); body.className='popup-body';
+    // Track scrolling so the place is remembered across re-renders and reopens.
+    body.addEventListener('scroll', () => { popupScrollTop = body.scrollTop; });
 
     // Hint screens replace the normal Found view entirely (solo only).
-    if (!roomMode && hintScreen) { renderHintScreen(body); popup.appendChild(body); return; }
+    if (!roomMode && hintScreen) { renderHintScreen(body); popup.appendChild(body); body.scrollTop = popupScrollTop; return; }
 
     // ── View toggle buttons (persistent header) ───────────────────────────────
     const views = document.createElement('div'); views.className='popup-views';
@@ -2164,7 +2173,7 @@ function renderPopup() {
         const btn=document.createElement('button');
         btn.className='popup-view-btn'+(popupView===mode?' active':'');
         btn.textContent=label;
-        btn.onclick=(ev)=>{ ev.stopPropagation(); popupView=mode; renderPopup(); };
+        btn.onclick=(ev)=>{ ev.stopPropagation(); popupView=mode; popupScrollTop=0; renderPopup(); };
         views.appendChild(btn);
     });
     popup.appendChild(views);
@@ -2199,6 +2208,7 @@ function renderPopup() {
     }
 
     popup.appendChild(body);
+    body.scrollTop = popupScrollTop; // restore the player's place in the list
 }
 
 // ── Hint panel ──────────────────────────────────────────────────────────────
