@@ -321,8 +321,19 @@
 
         /* ── Player ready badge ── */
         .ready-badge { margin-left: auto; font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 5px; }
-        .ready-badge.yes { background: #dcfce7; color: #16a34a; }
-        .ready-badge.no  { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); }
+        .ready-badge.yes  { background: #dcfce7; color: #16a34a; }
+        .ready-badge.no   { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); }
+        .ready-badge.away { background: #fef3c7; color: #b45309; }
+        .ready-badge.skip { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); }
+        .player-item.idle { opacity: 0.6; }
+
+        /* ── Skip toggle (on the Players line) ── */
+        .skip-toggle { padding: 4px 11px; font-size: 0.78rem; }
+        .skip-toggle.active { background: var(--text-muted); color: #fff; border-color: var(--text-muted); }
+
+        /* ── "Game in progress" banner for waiting players ── */
+        #lobby-game-banner { background: var(--cell-active); gap: 6px; }
+        .lobby-game-time { font-weight: 800; font-size: 1.15rem; color: var(--primary); }
 
         /* ── Room menu dropdown ── */
         .room-menu {
@@ -472,6 +483,14 @@
             </div>
         </div>
 
+        <div class="card" id="lobby-game-banner" style="display:none">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <span style="font-weight:700">Game in progress</span>
+                <span class="lobby-game-time" id="lobby-game-time">--:--</span>
+            </div>
+            <div class="hint">A game is underway — you'll be able to play when it ends.</div>
+        </div>
+
         <div class="card" id="name-entry-card">
             <div class="card-title">Your Name</div>
             <div style="display:flex;gap:8px">
@@ -482,15 +501,13 @@
         </div>
 
         <div class="card">
-            <div class="card-title">Players</div>
+            <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <span>Players</span>
+                <button class="btn btn-outline btn-sm skip-toggle" id="skip-toggle-btn" onclick="toggleSkipping()" disabled>Skip</button>
+            </div>
             <div class="player-list" id="player-list">
                 <div class="hint">No players yet…</div>
             </div>
-        </div>
-
-        <div class="card" id="sitting-out-card" style="display:none">
-            <div class="card-title" style="color:var(--text-muted)">Sitting Out</div>
-            <div class="player-list" id="sitting-out-list"></div>
         </div>
 
         <div class="card">
@@ -613,6 +630,9 @@ let roomScoreboardClosedRound = -1;
 let roomCountdownInterval = null;
 let startCountdownInterval = null;     // local ticker for the pre-game "starting in N…" dialog
 let startCountdownData = null;         // latest room snapshot, for the host's start decision
+let lastRoomData = null;              // most recent room snapshot (for presence/visibility logic)
+let lobbyGameTimerInterval = null;     // ticker for the "game in progress" clock shown to waiters
+let connectedListenerSet = false;      // .info/connected presence listener registered once
 const ROOM_START_COUNTDOWN_MS = 5000;  // shared lobby countdown before a game begins
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1765,7 +1785,6 @@ function endSelection() {
     preview.style.transition = ''; preview.style.opacity = '1';
 
     if (word.length >= 4) {
-        if (!roomMode) localStorage.setItem('G2_share_time', timerSeconds);
         const myWords = roomMode ? roomFoundWords : foundWords;
         if (validWords.has(word)) {
             if (!myWords.has(word)) {
@@ -1895,7 +1914,19 @@ function resumeTimer() {
 }
 function resetTimer() { clearInterval(timerInterval); timerInterval=null; timerStarted=false; timerPaused=false; timerSeconds=0; updateTimerDisplay(); }
 document.addEventListener('visibilitychange', () => {
-    if (roomMode) return;
+    if (roomMode) {
+        // While I'm actively playing a round the room overlay is hidden — don't touch
+        // my presence (the competitive clock keeps running and I'm still "in" the game).
+        const inGame = !document.getElementById('room-overlay').classList.contains('visible');
+        if (inGame || !roomRef || !iAmJoined()) return;
+        if (document.hidden) {
+            roomRef.child(`players/${playerId}`).update({ online: false });   // → shown as "Away"
+        } else {
+            roomRef.child(`players/${playerId}/online`).onDisconnect().set(false);
+            roomRef.child(`players/${playerId}`).update({ online: true });    // back to "Waiting"
+        }
+        return;
+    }
     if (document.hidden) pauseTimer(); else resumeTimer();
 });
 // Format seconds as MM:SS, or HH:MM:SS once it reaches an hour.
@@ -2547,24 +2578,47 @@ async function initRoomMode(rid) {
     const savedName = localStorage.getItem('gob_name') || '';
     if (savedName && savedName !== 'undefined') document.getElementById('player-name-input').value = savedName;
 
-    // Returning player: restore online status before listener fires
+    // Returning player: restore online status before listener fires. Only a transient
+    // "away" (online:false && !left) is auto-rejoined — someone who deliberately pressed
+    // Leave (left:true) is NOT silently pulled back in; they re-enter via an explicit Join.
     const roomData = snap.val();
     const existingPlayer = roomData?.players?.[playerId];
     const hasValidName = existingPlayer?.name && existingPlayer.name !== 'undefined';
-    if (existingPlayer && existingPlayer.online === false && hasValidName) {
+    const returning = existingPlayer && hasValidName && !existingPlayer.left;
+    if (returning && existingPlayer.online === false) {
         // Restore Firebase name to input and localStorage in case localStorage drifted
         document.getElementById('player-name-input').value = existingPlayer.name;
         localStorage.setItem('gob_name', existingPlayer.name);
         await roomRef.child(`players/${playerId}`).update({ online: true, ready: false });
-        roomRef.child(`players/${playerId}/online`).onDisconnect().set(false);
     }
+    // Arm the "mark me away on disconnect" handler for any joined (non-left) player,
+    // including one whose record still reads online:true (e.g. a fast reload), so a
+    // subsequent disconnect always flips them to away rather than leaving a ghost.
+    if (returning) roomRef.child(`players/${playerId}/online`).onDisconnect().set(false);
 
+    setupPresence();
     roomRef.on('value', snap => handleRoomUpdate(snap.val()));
 
 }
 
+// Firebase presence: whenever the realtime connection (re)establishes, re-arm the
+// onDisconnect "mark me away" handler and re-assert that I'm online. Registered once;
+// it's what stops a tab-switch / backgrounded phone from silently un-joining you —
+// you're shown "Away" while gone, then automatically back when you return.
+function setupPresence() {
+    if (connectedListenerSet || !db) return;
+    connectedListenerSet = true;
+    db.ref('.info/connected').on('value', snap => {
+        if (snap.val() !== true) return;
+        if (!roomMode || !roomRef || !iAmJoined()) return;
+        roomRef.child(`players/${playerId}/online`).onDisconnect().set(false);
+        roomRef.child(`players/${playerId}`).update({ online: true });
+    });
+}
+
 function handleRoomUpdate(data) {
     if (!data) { alert('This room has been closed.'); leaveRoom(); return; }
+    lastRoomData = data;
     if (data.state === 'lobby') {
         roomPlayingInitialized = false;
         scoreBoardShown = false;
@@ -2607,6 +2661,14 @@ function handleRoomUpdate(data) {
             renderLobby(data);
             return;
         }
+        // Not a participant in this round (stepped away, skipping, or joined after the
+        // countdown began) — wait it out in the lobby and watch the clock, don't get
+        // pulled onto the board. The host stamps playingRound on participants at start.
+        if (!roomPlayingInitialized && data.players[playerId]?.playingRound !== data.currentRound) {
+            showPanel('lobby');
+            renderLobby(data);
+            return;
+        }
         if (!roomPlayingInitialized && data.currentRound > roomLastPlayedRound) renderRoomPlaying(data);
     } else if (data.state === 'finished') {
         const myPlayer = data.players?.[playerId];
@@ -2632,21 +2694,31 @@ function handleRoomUpdate(data) {
 
 function checkAutoStart(data) {
     const players = data.players || {};
-    const arr = Object.entries(players)
-        .filter(([,p]) => p.online !== false && !p.skipping)
+    const cd = data.countdownStartAt;
+    const playable = Object.entries(players).filter(([,p]) => p.online !== false && !p.skipping && !p.left);
+    // Who counts toward THIS countdown: once it's running, only the players frozen
+    // into countdownPlayers when it began (set explicitly so the membership test
+    // can't be fooled by unsynchronized device clocks). A late joiner isn't in the
+    // set, so they can't passively block it — the game starts without them and they
+    // wait in the lobby. (They can still hit Cancel in the dialog to abort the start
+    // for everyone; that's the intended R3 behavior. And a frozen player who steps
+    // away is dropped by the online filter above — away players are ignored.)
+    const frozen = countdownFrozen(data);
+    const counted = (cd == null ? playable : playable.filter(([pid]) => !frozen || frozen.has(pid)))
         .sort((a,b) => (a[1].joined||0)-(b[1].joined||0));
-    const allReady = arr.length > 0 && arr.every(([,p]) => p.ready);
-    const isHost   = arr.length > 0 && arr[0][0] === playerId;
+    const allReady = counted.length > 0 && counted.every(([,p]) => p.ready);
+    const isHost   = counted.length > 0 && counted[0][0] === playerId;
 
     // The host owns the shared countdown clock: start it once everyone's ready,
-    // and clear it the instant that stops being true (a late joiner, an un-ready…).
+    // and clear it the instant that stops being true (someone un-readies / steps away).
     if (isHost) {
-        if (allReady && data.countdownStartAt == null) {
-            roomRef.child('countdownStartAt').set(Date.now());
+        if (allReady && cd == null) {
+            // Freeze the participant set atomically with the clock.
+            roomRef.update({ countdownStartAt: Date.now(), countdownPlayers: counted.map(([pid]) => pid) });
             return; // the resulting room update re-enters here and shows the dialog
         }
-        if (!allReady && data.countdownStartAt != null) {
-            roomRef.child('countdownStartAt').set(null);
+        if (!allReady && cd != null) {
+            roomRef.update({ countdownStartAt: null, countdownPlayers: null });
         }
     }
     syncStartCountdown(data);
@@ -2657,6 +2729,11 @@ function checkAutoStart(data) {
 function syncStartCountdown(data) {
     startCountdownData = data;
     if (data.countdownStartAt == null) { hideStartCountdown(); return; }
+    // Only joined, non-skipping players see (and can cancel) the "Game starting…"
+    // dialog. A skipping player is sitting this one out; a not-yet-joined browser
+    // isn't a participant — neither should be able to abort the group's start.
+    const me = data.players?.[playerId];
+    if (!iAmJoined(data) || me?.skipping) { hideStartCountdown(); return; }
 
     const endAt = data.countdownStartAt + ROOM_START_COUNTDOWN_MS;
     document.getElementById('start-countdown-overlay').classList.add('visible');
@@ -2668,10 +2745,14 @@ function syncStartCountdown(data) {
             if (rem <= 0) {
                 clearInterval(startCountdownInterval); startCountdownInterval = null;
                 const d = startCountdownData;
-                const arr = Object.entries(d.players || {})
-                    .filter(([,p]) => p.online !== false && !p.skipping)
-                    .sort((a,b) => (a[1].joined||0)-(b[1].joined||0));
-                if (arr.length && arr[0][0] === playerId) autoStartGame(d); // host starts the game
+                const frozen = countdownFrozen(d);
+                // Any frozen, still-online participant may fire the start — autoStartGame's
+                // state transaction picks a single winner, so there's no double-start. This
+                // avoids a stuck countdown if whoever was "host" steps away at the buzzer.
+                const me = d.players?.[playerId];
+                const amParticipant = me && me.online !== false && !me.skipping && !me.left
+                    && (!frozen || frozen.has(playerId));
+                if (amParticipant) autoStartGame(d);
             }
         };
         tick();
@@ -2688,7 +2769,7 @@ function hideStartCountdown() {
 // so the host doesn't immediately restart it — now settings can be changed freely.
 async function cancelStartCountdown() {
     if (!roomRef) return;
-    const updates = { countdownStartAt: null };
+    const updates = { countdownStartAt: null, countdownPlayers: null };
     const snap = await roomRef.child('players').once('value');
     const players = snap.val() || {};
     for (const pid of Object.keys(players)) {
@@ -2697,70 +2778,119 @@ async function cancelStartCountdown() {
     await roomRef.update(updates);
 }
 
+// Am I a joined member of the room (have a name on record, haven't pressed Leave)?
+function iAmJoined(d = lastRoomData) {
+    const p = d?.players?.[playerId];
+    return !!(p && p.name && p.name !== 'undefined' && !p.left);
+}
+
+// The set of playerIds frozen into the running countdown, or null if none. Firebase
+// may return the stored array as either an array or a sparse object, so normalize.
+function countdownFrozen(d) {
+    const f = d?.countdownPlayers;
+    if (!f) return null;
+    return new Set(Array.isArray(f) ? f : Object.values(f));
+}
+
+// Show waiting players how much time is left in the game currently in progress,
+// so a late joiner / away / skipping player knows how long until they can play.
+function updateLobbyGameTimer(data) {
+    const banner = document.getElementById('lobby-game-banner');
+    if (lobbyGameTimerInterval) { clearInterval(lobbyGameTimerInterval); lobbyGameTimerInterval = null; }
+    const durationMs = (data.settings?.minutes || 3) * 60000;
+    const endAt = (data.startedAt || 0) + durationMs;
+    if (data.state !== 'playing' || !data.startedAt || endAt <= Date.now()) {
+        banner.style.display = 'none';
+        return;
+    }
+    banner.style.display = '';
+    const el = document.getElementById('lobby-game-time');
+    const tick = () => {
+        const rem = Math.max(0, endAt - Date.now());
+        const s = Math.ceil(rem / 1000);
+        el.textContent = `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+        if (rem <= 0) {
+            // Time's up locally, but the round only ends once a participant's write
+            // flips state off 'playing'. Hold the banner at 0:00 (don't flash it away);
+            // the next room update hides it when the game truly leaves 'playing'.
+            clearInterval(lobbyGameTimerInterval); lobbyGameTimerInterval = null;
+        }
+    };
+    tick();
+    lobbyGameTimerInterval = setInterval(tick, 500);
+}
+
 // ── Lobby ──────────────────────────────────────────────────────────────────
+// A player's lobby status is derived (not stored): skipping > away > ready > waiting.
+function playerStatus(p) {
+    if (p.skipping)        return { label: 'Skipping', cls: 'skip', rank: 2, idle: true };
+    if (p.online === false) return { label: 'Away',     cls: 'away', rank: 1, idle: true };
+    if (p.ready)           return { label: 'Ready',    cls: 'yes',  rank: 0, idle: false };
+    return                        { label: 'Waiting',  cls: 'no',   rank: 0, idle: false };
+}
+
 function renderLobby(data) {
     document.getElementById('lobby-code').textContent = roomId;
 
     const players = data.players || {};
     const myPlayer = players[playerId];
-    const hasJoined = !!myPlayer && myPlayer.online !== false;
+    // "Joined" = I have a name record in this room (even if momentarily marked away),
+    // so a tab-switch round-trip never demotes me back to the un-joined "Join" state.
+    const iJoined   = !!myPlayer && myPlayer.name && myPlayer.name !== 'undefined' && !myPlayer.left;
     const mySkipping = myPlayer?.skipping || false;
+    const myAway     = myPlayer?.online === false;
     const myReady    = myPlayer?.ready || false;
 
     document.getElementById('name-entry-card').style.display = '';
     const joinBtn = document.getElementById('join-lobby-btn');
-    if (joinBtn) joinBtn.textContent = hasJoined ? 'Update' : 'Join';
+    if (joinBtn) joinBtn.textContent = iJoined ? 'Update' : 'Join';
+
+    const skipBtn = document.getElementById('skip-toggle-btn');
+    if (skipBtn) {
+        skipBtn.disabled = !iJoined;
+        skipBtn.classList.toggle('active', mySkipping);
+        skipBtn.textContent = mySkipping ? 'Skipping ✓' : 'Skip';
+    }
 
     const readyBtn = document.getElementById('ready-btn');
-    readyBtn.disabled = !hasJoined || mySkipping;
+    readyBtn.disabled = !iJoined || mySkipping || myAway;
     readyBtn.textContent = myReady ? 'Ready ✓' : "I'm Ready";
     readyBtn.className = 'btn btn-full' + (myReady ? ' btn-green' : '');
 
-    const onlinePlayers = Object.entries(players).filter(([,p]) => p.online !== false);
-    const hostId = onlinePlayers.slice().sort((a,b) => (a[1].joined||0)-(b[1].joined||0))[0]?.[0];
+    // Everyone who is in the room (has a name and hasn't pressed Leave) is shown,
+    // including players who stepped away — so the group can see who's around.
+    const roster = Object.entries(players).filter(([,p]) => p.name && p.name !== 'undefined' && !p.left);
+    const hostId = roster
+        .filter(([,p]) => p.online !== false && !p.skipping)
+        .sort((a,b) => (a[1].joined||0)-(b[1].joined||0))[0]?.[0];
 
-    const activePlayers = onlinePlayers
-        .filter(([,p]) => !p.skipping)
-        .sort((a,b) => (b[1].gamePoints||0)-(a[1].gamePoints||0) || (a[1].joined||0)-(b[1].joined||0));
-    const sittingOut = onlinePlayers
-        .filter(([,p]) => p.skipping)
-        .sort((a,b) => (a[1].joined||0)-(b[1].joined||0));
+    // Sort: playable players first (by score), then away, then skipping; ties by join order.
+    roster.sort((a,b) => {
+        const ra = playerStatus(a[1]).rank, rb = playerStatus(b[1]).rank;
+        if (ra !== rb) return ra - rb;
+        if (ra === 0) { const d = (b[1].gamePoints||0)-(a[1].gamePoints||0); if (d) return d; }
+        return (a[1].joined||0)-(b[1].joined||0);
+    });
 
     const pl = document.getElementById('player-list');
     pl.innerHTML = '';
-    if (!activePlayers.length) {
+    if (!roster.length) {
         pl.innerHTML = '<div class="hint">No players yet…</div>';
     } else {
-        activePlayers.forEach(([pid,p]) => {
-            const el=document.createElement('div');
-            el.className='player-item'+(pid===playerId?' me':'');
+        roster.forEach(([pid,p]) => {
+            const st = playerStatus(p);
+            const el = document.createElement('div');
+            el.className = 'player-item' + (pid===playerId?' me':'') + (st.idle?' idle':'');
             const hostTag = pid===hostId ? ' <span style="font-size:.75rem;color:var(--text-muted);font-weight:400">(host)</span>' : '';
             const pts = p.gamePoints || 0;
             const scoreTag = `<span style="font-size:.78rem;color:var(--text-muted);margin-left:4px">${pts} pt${pts!==1?'s':''}</span>`;
-            const badge = `<span class="ready-badge ${p.ready?'yes':'no'}">${p.ready?'Ready':'Waiting'}</span>`;
-            if (pid === playerId) {
-                el.innerHTML=`<button onclick="toggleSkipping(true)" title="Sit out this round" style="background:none;border:none;color:var(--error);font-size:0.95rem;font-weight:700;cursor:pointer;padding:0;flex-shrink:0;line-height:1">✕</button><span class="player-dot"></span>${p.name||'?'}${hostTag}${scoreTag}${badge}`;
-            } else {
-                el.innerHTML=`<span class="player-dot"></span>${p.name||'?'}${hostTag}${scoreTag}${badge}`;
-            }
+            const dotColor = st.idle ? ' style="background:var(--text-muted)"' : '';
+            el.innerHTML = `<span class="player-dot"${dotColor}></span>${p.name||'?'}${hostTag}${scoreTag}<span class="ready-badge ${st.cls}">${st.label}</span>`;
             pl.appendChild(el);
         });
     }
 
-    const sitCard = document.getElementById('sitting-out-card');
-    const sitList = document.getElementById('sitting-out-list');
-    sitCard.style.display = sittingOut.length ? '' : 'none';
-    sitList.innerHTML = '';
-    sittingOut.forEach(([pid,p]) => {
-        const el=document.createElement('div');
-        el.className='player-item'+(pid===playerId?' me':'');
-        if (pid === playerId) {
-            el.innerHTML=`<button onclick="toggleSkipping(false)" title="Rejoin" style="background:none;border:none;color:var(--primary);font-size:0.95rem;font-weight:700;cursor:pointer;padding:0;flex-shrink:0;line-height:1">↩</button><span class="player-dot" style="background:var(--text-muted)"></span><span style="color:var(--text-muted)">${p.name||'?'}</span>`;
-        } else {
-            el.innerHTML=`<span class="player-dot" style="background:var(--text-muted)"></span><span style="color:var(--text-muted)">${p.name||'?'}</span>`;
-        }
-        sitList.appendChild(el);
-    });
+    updateLobbyGameTimer(data);
 
     const s = data.settings || {rows:4,cols:4,minutes:3};
     const rows = s.rows || s.size || 4;
@@ -2785,9 +2915,9 @@ async function joinLobby() {
     const snap = await roomRef.child(`players/${playerId}`).once('value');
     const existing = snap.val();
     if (existing) {
-        await roomRef.child(`players/${playerId}`).update({ name, online: true, ready: false, skipping: false });
+        await roomRef.child(`players/${playerId}`).update({ name, online: true, ready: false, skipping: false, left: false });
     } else {
-        await roomRef.child(`players/${playerId}`).set({ name, gamePoints: 0, joined: Date.now(), online: true, ready: false, skipping: false });
+        await roomRef.child(`players/${playerId}`).set({ name, gamePoints: 0, joined: Date.now(), online: true, ready: false, skipping: false, left: false });
     }
     roomRef.child(`players/${playerId}/online`).onDisconnect().set(false);
     const joinBtn = document.getElementById('join-lobby-btn');
@@ -2801,7 +2931,15 @@ async function toggleReady() {
     await roomRef.child(`players/${playerId}/ready`).set(!p.ready);
 }
 
+// Skip is a persistent, personal "sit out" toggle. While skipping you stay in the
+// room (and can watch the game clock) but never get pulled into a starting game.
+// Called with no argument from the header toggle (flips current state); the legacy
+// boolean form is still honored.
 async function toggleSkipping(skip) {
+    if (skip === undefined) {
+        const snap = await roomRef.child(`players/${playerId}`).once('value');
+        skip = !(snap.val()?.skipping);
+    }
     await roomRef.child(`players/${playerId}`).update({ skipping: skip, ready: false });
 }
 
@@ -2894,33 +3032,58 @@ function computeRoomWords(board) {
 
 // ── Game start ─────────────────────────────────────────────────────────────
 async function autoStartGame(data) {
-    // Host only — ensure dictionary and word selections are loaded before generation
+    // Any frozen participant may call this — ensure dictionary/word selections are
+    // loaded before board generation. The board is generated up front because it's
+    // expensive/random and a transaction's update fn may run several times.
     if (!dictionary.size) await loadDictionary();
     await loadGameWordSelections();
 
-    roomRef.child('state').transaction(
-        cur => (cur === 'lobby' || cur === 'finished') ? 'playing' : undefined,
-        async (err, committed) => {
-            if (!committed) return;
-            const snap = await roomRef.once('value');
-            const d = snap.val();
-            const s = d.settings || {rows:4,cols:4,minutes:3};
-            const rows = s.rows || s.size || 4;
-            const cols = s.cols || s.size || 4;
-            const nextRound = (d.currentRound ?? -1) + 1;
-            const board = s.mode === 'random' ? generateProceduralBoard(20) : generateShapedBoard(rows, cols);
-            const { words, bonusWords: bonus } = computeRoomWords(board);
-            if (words.length) board.words = words;
-            if (bonus.length) board.bonusWords = bonus;
-            const updates = { board, startedAt: Date.now(), currentRound: nextRound, countdownStartAt: null };
-            for (const pid of Object.keys(d.players || {})) {
-                updates[`players/${pid}/closedScoreboard`] = false;
-                updates[`players/${pid}/ready`] = false;
-                updates[`players/${pid}/bailedRound`] = null;
-            }
-            await roomRef.update(updates);
+    // Cache the room locally (so the transaction's first run sees real data, not a
+    // null cache miss) and bail early if the start is no longer valid.
+    const snap = await roomRef.once('value');
+    const d0 = snap.val();
+    if (!d0 || (d0.state !== 'lobby' && d0.state !== 'finished') || d0.countdownStartAt == null) return;
+    const s = d0.settings || {rows:4,cols:4,minutes:3};
+    const rows = s.rows || s.size || 4;
+    const cols = s.cols || s.size || 4;
+    const board = s.mode === 'random' ? generateProceduralBoard(20) : generateShapedBoard(rows, cols);
+    const { words, bonusWords: bonus } = computeRoomWords(board);
+    if (words.length) board.words = words;
+    if (bonus.length) board.bonusWords = bonus;
+
+    // ONE atomic whole-room transaction flips lobby/finished → playing and writes the
+    // board, fresh startedAt, currentRound and per-player flags in a single commit.
+    // Because state and startedAt land together, no client ever sees state:'playing'
+    // beside the PREVIOUS round's stale startedAt (which would trip the "abandoned
+    // round" bounce). There's no two-step window, so the room can't wedge mid-start.
+    // Exactly one caller wins; concurrent callers see state already advanced (or the
+    // countdown cancelled) and abort — no double-start.
+    roomRef.transaction(room => {
+        if (!room) return;                                                // room gone — abort
+        if (room.state !== 'lobby' && room.state !== 'finished') return;  // already started — abort
+        if (room.countdownStartAt == null) return;                        // countdown cancelled — abort
+        const nextRound = (room.currentRound ?? -1) + 1;
+        // Participants = players frozen into countdownPlayers when the countdown began,
+        // still online and not skipping. Only they get pulled onto the board; late
+        // joiners / away / skipping players keep their old playingRound and wait in the
+        // lobby for the next game.
+        const frozen = countdownFrozen(room);
+        room.state = 'playing';
+        room.board = board;
+        room.startedAt = Date.now();
+        room.currentRound = nextRound;
+        room.countdownStartAt = null;
+        room.countdownPlayers = null;
+        for (const pid of Object.keys(room.players || {})) {
+            const p = room.players[pid];
+            p.closedScoreboard = false;
+            p.ready = false;
+            p.bailedRound = null;
+            if (p.online !== false && !p.skipping && !p.left && (!frozen || frozen.has(pid)))
+                p.playingRound = nextRound;
         }
-    );
+        return room;
+    });
 }
 
 function renderRoomPlaying(data) {
@@ -3053,6 +3216,25 @@ function renderScoreboard(data) {
 
     const players = data.players || {};
     const round   = data.currentRound ?? 0;
+
+    // Reloading straight onto the scoreboard skips renderRoomPlaying, leaving validWords
+    // (and roomFoundWords/foundBonusWords) empty — which would blank out the "Your Words"
+    // list AND the per-player word modal (both read validWords as the full word list).
+    // An empty validWords is the reliable "we didn't play this round locally" signal;
+    // rebuild everything the scoreboard needs from Firebase. (Skipped on the normal
+    // play→scoreboard path, where validWords is already populated for this round.)
+    if (!validWords.size) {
+        roomCurrentRound = round;
+        if (data.board?.words?.length) {
+            validWords.clear();
+            for (const w of data.board.words) validWords.add(w);
+        }
+        bonusWords.clear();
+        if (data.board?.bonusWords?.length) for (const w of data.board.bonusWords) bonusWords.add(w);
+        const mine = players[playerId]?.rounds?.[round];
+        roomFoundWords  = new Set(mine?.words || []);
+        foundBonusWords = new Set(mine?.bonusWords || []);
+    }
     const pointsDone = (data[`pointsRound${round}`] || '').toString().startsWith('done:');
     const entries = Object.entries(players).map(([pid,p]) => ({
         pid,
@@ -3216,11 +3398,15 @@ async function leaveRoom() {
     if (roomRef) {
         try {
             roomRef.child(`players/${playerId}/online`).onDisconnect().cancel();
-            await roomRef.child(`players/${playerId}`).update({ online: false, ready: false });
+            // `left` distinguishes a deliberate exit from a transient "away" — a left
+            // player drops out of the roster instead of lingering as "Away".
+            await roomRef.child(`players/${playerId}`).update({ online: false, ready: false, left: true });
         } catch {}
         roomRef.off(); roomRef=null;
     }
     if (roomCountdownInterval) { clearInterval(roomCountdownInterval); roomCountdownInterval=null; }
+    if (lobbyGameTimerInterval) { clearInterval(lobbyGameTimerInterval); lobbyGameTimerInterval=null; }
+    lastRoomData = null;
     hideStartCountdown();
 
     // Reset room state
@@ -3248,14 +3434,21 @@ async function leaveRoom() {
 
 function shareGame() {
     if (roomMode) return;
-    const secs = parseInt(localStorage.getItem('G2_share_time') || timerSeconds || 0);
-    const timeStr = formatTime(secs);
+    // Report exactly what the on-screen timer shows (same source the display uses).
+    const timeStr = formatTime(timerSeconds);
     const score = totalScore(foundWords);
+    // The board's own date (YYYY-MM-DD) — not necessarily today. Fall back to the
+    // current puzzle date when this isn't a dated daily board. Parse the parts by
+    // hand so the day can't shift across time zones (new Date('YYYY-MM-DD') is UTC).
+    const MONTHS = ['January','February','March','April','May','June','July',
+                    'August','September','October','November','December'];
+    const [by, bm, bd] = (currentBoardDate || getPuzzleDate()).split('-').map(Number);
+    const dateStr = `${MONTHS[bm - 1]}, ${String(bd).padStart(2, '0')}, ${by}`;
     // Spelled-out hint count line, between the time and the website link.
     const hintWords = ['Zero','One','Two','Three','Four'];
     const n = hintsUsed.size;
     const hintLine = `${hintWords[n] ?? n} hint${n === 1 ? '' : 's'} used`;
-    const text = `🦃 I played Gobblegle! 🦃\nFound: ${foundWords.size}/${validWords.size}\nScore: ${score}\n${timeStr}\n${hintLine}\nhttps://gobblegle.com`;
+    const text = `🦃 I played Gobblegle! 🦃\n${dateStr}\nFound: ${foundWords.size}/${validWords.size}\nScore: ${score}\n${timeStr}\n${hintLine}\nhttps://gobblegle.com`;
     if (navigator.share) {
         navigator.share({ title: 'Gobblegle', text }).catch(() => {});
     } else {
@@ -3292,6 +3485,7 @@ function showPanel(panel) {
     const sb      = document.getElementById('scoreboard-panel');
 
     if (panel !== 'lobby') hideStartCountdown(); // only the lobby drives the start countdown
+    if (panel !== 'lobby' && lobbyGameTimerInterval) { clearInterval(lobbyGameTimerInterval); lobbyGameTimerInterval = null; }
 
     if (panel === 'game') {
         overlay.classList.remove('visible');
