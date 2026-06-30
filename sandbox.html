@@ -757,6 +757,8 @@ let roomScoreboardClosedRound = -1;
 let roomCountdownInterval = null;
 let startCountdownInterval = null;     // local ticker for the pre-game "starting in N…" dialog
 let startCountdownData = null;         // latest room snapshot, for the host's start decision
+let startCountdownFiredFor = null;     // the countdownStartAt timestamp we've already kicked off autoStartGame for — makes the start a one-shot per countdown (stale 'lobby' echoes during the lobby→playing window can't re-arm it)
+let startingGame = false;              // re-entrancy guard so autoStartGame's expensive board generation can't stack up on the main thread
 let lastRoomData = null;              // most recent room snapshot (for presence/visibility logic)
 let lobbyGameTimerInterval = null;     // ticker for the "game in progress" clock shown to waiters
 let connectedListenerSet = false;      // .info/connected presence listener registered once
@@ -2864,12 +2866,29 @@ function checkAutoStart(data) {
 // Every client runs the local ticker; the host alone flips the room to 'playing' at zero.
 function syncStartCountdown(data) {
     startCountdownData = data;
-    if (data.countdownStartAt == null) { hideStartCountdown(); return; }
+    // No countdown running. Clear the one-shot latch so the NEXT countdown can fire.
+    // This is the only safe place to reset it: the snapshot itself reports null, and
+    // Firebase never re-delivers the old non-null timestamp after a null for this ref,
+    // so a stale 'lobby' echo can't slip back in and re-arm. (Resetting in
+    // hideStartCountdown would be unsafe — that runs on the state→'playing' path too.)
+    if (data.countdownStartAt == null) { startCountdownFiredFor = null; hideStartCountdown(); return; }
     // Only joined, non-skipping players see (and can cancel) the "Game starting…"
     // dialog. A skipping player is sitting this one out; a not-yet-joined browser
     // isn't a participant — neither should be able to abort the group's start.
     const me = data.players?.[playerId];
     if (!iAmJoined(data) || me?.skipping) { hideStartCountdown(); return; }
+
+    // This countdown's start has already been kicked off locally. Don't re-show the
+    // dialog or re-arm the ticker. autoStartGame is async (it awaits the dictionary,
+    // word selections and a room read before the lobby→playing transaction commits),
+    // so the room sits in state:'lobby' for a beat after the buzzer. During that beat
+    // every roomRef.on('value') event (presence heartbeats, the host's own write, the
+    // transaction's optimistic echo) re-enters here; without this guard each one would
+    // rebuild the ticker, instantly re-fire autoStartGame (another full board
+    // generation), and re-pin the overlay at 0 — the runaway "berserker" loop / frozen
+    // dialog. Keyed on the timestamp so a brand-new countdown (fresh Date.now()) still
+    // arms normally.
+    if (data.countdownStartAt === startCountdownFiredFor) { hideStartCountdown(); return; }
 
     const endAt = data.countdownStartAt + ROOM_START_COUNTDOWN_MS;
     document.getElementById('start-countdown-overlay').classList.add('visible');
@@ -2881,6 +2900,8 @@ function syncStartCountdown(data) {
             if (rem <= 0) {
                 clearInterval(startCountdownInterval); startCountdownInterval = null;
                 const d = startCountdownData;
+                if (d.countdownStartAt === startCountdownFiredFor) return; // already fired this countdown — don't double-start
+                startCountdownFiredFor = d.countdownStartAt;               // latch BEFORE firing so re-entry is suppressed
                 const frozen = countdownFrozen(d);
                 // Any frozen, still-online participant may fire the start — autoStartGame's
                 // state transaction picks a single winner, so there's no double-start. This
@@ -3168,6 +3189,23 @@ function computeRoomWords(board) {
 
 // ── Game start ─────────────────────────────────────────────────────────────
 async function autoStartGame(data) {
+    // Re-entrancy guard. The countdown's one-shot latch (startCountdownFiredFor)
+    // already limits this to one call per countdown per client; this is a second line
+    // of defense against a cancel-at-the-buzzer race, where a fresh countdown could
+    // arm while a prior call is still mid-await, stacking a second expensive board
+    // generation on the main thread. try/finally guarantees the flag is always
+    // cleared — a thrown board-gen error or an early-return bail can never wedge a
+    // client out of all future starts.
+    if (startingGame) return;
+    startingGame = true;
+    try {
+        await _runAutoStartGame(data);
+    } finally {
+        startingGame = false;
+    }
+}
+
+async function _runAutoStartGame(data) {
     // Any frozen participant may call this — ensure dictionary/word selections are
     // loaded before board generation. The board is generated up front because it's
     // expensive/random and a transaction's update fn may run several times.
