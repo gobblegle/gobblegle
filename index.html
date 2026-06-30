@@ -383,6 +383,87 @@
             font-size: 3.4rem; font-weight: 900; line-height: 1; color: var(--primary);
             font-variant-numeric: tabular-nums;
         }
+
+        /* ════ Tutorial mode (sandbox) ════ */
+        #tutorial-overlay {
+            position: fixed; left: 0; right: 0; bottom: 0; top: 0;
+            background: var(--bg); z-index: 80; display: none;
+            flex-direction: column; align-items: center;
+            overflow-y: auto; overflow-x: hidden;  /* scroll, don't clip, on short/landscape screens */
+            padding: 12px 16px calc(78px + env(safe-area-inset-bottom, 0px));
+        }
+        #tutorial-overlay.visible { display: flex; }
+        .tut-progress { display: flex; gap: 8px; margin-bottom: 10px; flex-shrink: 0; }
+        .tut-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--border); transition: background .25s, transform .25s; }
+        .tut-dot.active { background: var(--primary); transform: scale(1.3); }
+        .tut-dot.done { background: var(--cell-border-active); }
+        .tut-text {
+            max-width: 460px; text-align: center; font-size: 1.02rem; line-height: 1.5;
+            font-weight: 600; color: var(--text); margin: 2px auto 6px; flex-shrink: 0;
+        }
+        .tut-text b { color: var(--primary); font-weight: 800; letter-spacing: 0.02em; }
+        .tut-stage {
+            flex: 1 0 auto; display: flex; flex-direction: column; align-items: center;
+            justify-content: center; width: 100%; gap: 10px; min-height: 0;
+        }
+        .tut-word {
+            min-height: 38px; display: flex; align-items: center; justify-content: center;
+            font-size: 1.6rem; font-weight: 800; letter-spacing: 0.12em; color: var(--word-default);
+        }
+        .tut-word.success { color: #22c55e; }
+        #tut-board { position: relative; touch-action: none; width: fit-content; margin: 0 auto; }
+        .tut-cell {
+            width: var(--tut-cell, 54px); height: var(--tut-cell, 54px);
+            font-size: var(--tut-font, 1.9rem);
+        }
+        .tut-hint-label { font-size: 0.84rem; color: var(--text-muted); font-style: italic; min-height: 18px; }
+        .tut-skip-btn {
+            position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+            z-index: 86; background: var(--surface); color: var(--text-muted);
+            border: 1px solid var(--border); border-radius: 9px; padding: 9px 18px;
+            font-size: 0.9rem; font-weight: 700; cursor: pointer; font-family: inherit;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+        }
+        .tut-skip-btn:hover { background: var(--cell-active); color: var(--primary); border-color: var(--cell-border-active); }
+        /* Header buttons are inert during the walkthrough (the VS highlight is purely visual). */
+        body.tutorial-active header button { pointer-events: none; }
+        /* VS / room button highlight on the last step */
+        #tut-vs-ring {
+            position: fixed; border: 3px solid var(--primary); border-radius: 50%;
+            pointer-events: none; z-index: 95; box-shadow: 0 0 0 4px rgba(194,65,12,0.18);
+            animation: tutRingPulse 1.15s ease-in-out infinite;
+        }
+        @keyframes tutRingPulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.16); opacity: 0.5; }
+        }
+        .tut-vs-pulse { animation: tutBtnPulse 1.15s ease-in-out infinite; }
+        @keyframes tutBtnPulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(194,65,12,0.45); }
+            50% { box-shadow: 0 0 0 9px rgba(194,65,12,0); }
+        }
+
+        /* ════ In-game coach marks (shown during real play after the walkthrough) ════ */
+        #tut-coach {
+            position: fixed; inset: 0; z-index: 240; display: none;
+            align-items: center; justify-content: center; padding: 24px;
+            background: rgba(0,0,0,0.45);
+        }
+        #tut-coach.visible { display: flex; }
+        .tut-coach-card {
+            background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+            padding: 22px 22px 18px; max-width: 360px; width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            display: flex; flex-direction: column; gap: 18px; text-align: center;
+        }
+        .tut-coach-text { font-size: 1.0rem; line-height: 1.55; font-weight: 600; color: var(--text); }
+        .tut-coach-text b { color: var(--primary); font-weight: 800; }
+        .tut-coach-ok {
+            align-self: stretch; background: var(--primary); color: #fff; border: none;
+            border-radius: 10px; padding: 11px 0; font-size: 1rem; font-weight: 700;
+            cursor: pointer; font-family: inherit;
+        }
+        .tut-coach-ok:hover { background: var(--primary-hover); }
     </style>
 </head>
 <body>
@@ -398,8 +479,29 @@
 
 <div class="loader" id="loader">
     <div class="spinner"></div>
-    <div id="loader-text">Loading Dictionary…</div>
+    <div id="loader-text">Loading…</div>
 </div>
+<script>
+    // Tutorial onboarding: pre-hide the loader for genuine first-time visitors so the
+    // walkthrough appears instantly with no spinner flash. Mirrors shouldShow() below.
+    try {
+        const _tp = new URLSearchParams(location.search);
+        let _willTutorial = false;
+        if (!_tp.get('room')) {
+            if (_tp.has('tutorial')) {
+                _willTutorial = _tp.get('tutorial') !== '0';
+            } else if (localStorage.getItem('G2_tutorial_done') !== '1') {
+                let _played = !!localStorage.getItem('gob_pid');
+                for (let i = 0; !_played && i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if (k && (k.indexOf('G2_found_') === 0 || k.indexOf('G2_timer_') === 0)) _played = true;
+                }
+                _willTutorial = !_played;
+            }
+        }
+        if (_willTutorial) document.getElementById('loader').style.display = 'none';
+    } catch {}
+</script>
 
 <header>
     <button id="burger-btn" onclick="toggleBurgerMenu(event)" title="Puzzles" aria-label="Puzzles" class="room-create-btn" style="position:absolute;left:16px;font-size:1.1rem;letter-spacing:0">☰</button>
@@ -568,6 +670,29 @@
         <div class="start-countdown-title">Game starting…</div>
         <div class="start-countdown-num" id="start-countdown-num">5</div>
         <button class="btn btn-full btn-outline" onclick="cancelStartCountdown()">Cancel</button>
+    </div>
+</div>
+
+<!-- ── Tutorial overlay (sandbox) ── -->
+<div id="tutorial-overlay">
+    <div class="tut-progress" id="tut-progress"></div>
+    <div class="tut-text" id="tut-text"></div>
+    <div class="tut-stage">
+        <div class="tut-word" id="tut-word"></div>
+        <div class="board-container" id="tut-board">
+            <svg class="svg-overlay" id="tut-svg"></svg>
+            <div class="grid" id="tut-grid"></div>
+        </div>
+        <div class="tut-hint-label" id="tut-hint-label"></div>
+    </div>
+</div>
+<button class="tut-skip-btn" id="tut-skip-btn" onclick="tutSkip()" style="display:none">Skip ▸</button>
+
+<!-- ── In-game coach mark (shown during real play) ── -->
+<div id="tut-coach">
+    <div class="tut-coach-card">
+        <div class="tut-coach-text" id="tut-coach-text"></div>
+        <button class="tut-coach-ok" id="tut-coach-ok">OK</button>
     </div>
 </div>
 
@@ -1123,7 +1248,7 @@ async function loadDictionary() {
         return;
     }
     try {
-        const res = await fetch('./2of12inf.txt');
+        const res = await fetch('./in_all_three.txt');
         if (res.ok) { processDictText(await res.text()); return; }
     } catch {}
     document.getElementById('loader').innerHTML =
@@ -1793,6 +1918,7 @@ function endSelection() {
                 myWords.add(word);
                 roomMode ? updateRoomScoreUI() : (saveProgress(), updateScoreUI());
                 updateTileHints();
+                if (!roomMode && typeof tutProgressCheck === 'function') tutProgressCheck();
                 preview.classList.add('found','settling');
                 requestAnimationFrame(() => { preview.style.opacity = '0.5'; });
             } else {
@@ -3511,6 +3637,527 @@ function showPanel(panel) {
         sb.style.display    = panel==='scoreboard' ? '' : 'none';
     }
 }
+</script>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════════
+   TUTORIAL MODE / ONBOARDING
+   A self-contained first-run walkthrough plus three in-game coach marks. It
+   reuses the game's visual styles but runs its OWN board, pointer handling,
+   validation and demo animation, so it never touches the live game state.
+
+   • Walkthrough: 4 swipe puzzles. After 15s idle on an animated step the swipe
+     path is demonstrated on a 5s repeating loop; it stops the moment the player
+     attempts the puzzle and resumes if they lift without solving.
+   • Completion is remembered in localStorage (G2_tutorial_done) so returning
+     players skip straight to today's puzzle.
+   • Coach marks fire the first time a player crosses the orange-number and
+     grey-number tile-hint thresholds during real solo play.
+
+   Testing: visit ?tutorial (or ?tutorial=1) to force the whole onboarding to
+   replay; ?tutorial=0 forces it off.
+   ════════════════════════════════════════════════════════════════════════════ */
+(function () {
+  const DONE_KEY    = 'G2_tutorial_done';
+  const HINT_START  = 'G2_tut_hint_start';   // orange-numbers coach shown
+  const HINT_USAGE  = 'G2_tut_hint_usage';   // grey-numbers + Found coach shown
+  const IDLE_MS  = 7000;   // wait this long with no solve before demoing
+  const CYCLE_MS = 5000;   // one full demo loop
+  const SWEEP_MS = 3800;   // time the "finger" takes to trace the path (then holds)
+
+  const STEPS = [
+    {
+      text: 'Gobblegle is a path finding word game. Touch a letter and swipe through more letters to create words. Spell <b>GOBBLEGLE</b> below.',
+      rows: 2, cols: 6,
+      cells: [
+        ['G','O','B','B','L','E'],
+        [null,null,null,'E','L','G'],
+      ],
+      target: 'GOBBLEGLE',
+      path: [[0,0],[0,1],[0,2],[0,3],[0,4],[0,5],[1,5],[1,4],[1,3]],
+      animate: true,
+    },
+    {
+      text: 'You can double back on previously used letters. Try spelling <b>GOBBLEGLE</b> again.',
+      rows: 2, cols: 3,
+      cells: [
+        ['O','G','L'],
+        ['B','B','E'],
+      ],
+      target: 'GOBBLEGLE',
+      path: [[0,1],[0,0],[1,0],[1,1],[0,2],[1,2],[0,1],[0,2],[1,2]],
+      animate: true,
+    },
+    {
+      text: 'Words must be at least 4 letters long. The longer the word, the more the points.',
+      rows: 1, cols: 4,
+      cells: [['N','E','X','T']],
+      target: 'NEXT',
+      path: [[0,0],[0,1],[0,2],[0,3]],
+      animate: false,
+    },
+    {
+      text: "Check out <b>VERSUS</b> mode to battle it out with your friends. Simply start a room and share the link, or join an already existing room. You're all set! Swipe <b>PLAY</b> to start!",
+      rows: 1, cols: 4,
+      cells: [['P','L','A','Y']],
+      target: 'PLAY',
+      path: [[0,0],[0,1],[0,2],[0,3]],
+      animate: true,
+      highlightVs: true,
+    },
+  ];
+
+  let active = false;
+  let stepIndex = 0;
+  let cellEls = [];        // 2D DOM mirror for the tutorial board
+  let path = [];           // current user swipe path [{r,c}]
+  let selecting = false;
+  let solved = false;      // current step solved (during the brief advance delay)
+  let idleTimer = null;
+  let demoRAF = null;
+  let demoActive = false;  // demo has triggered this step (so it keeps resuming)
+  let listenersBound = false;
+  let advanceTimer = null;    // the 950ms "success flash → next step" timer
+  let resizeDemoTimer = null; // debounce for restarting the demo after a resize
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const $ = id => document.getElementById(id);
+  const flag = k => { try { return localStorage.getItem(k) === '1'; } catch { return false; } };
+  const setFlag = k => { try { localStorage.setItem(k, '1'); } catch {} };
+  const clearFlag = k => { try { localStorage.removeItem(k); } catch {} };
+
+  // True for anyone who has already played — so established players aren't forced
+  // through onboarding. Signals: a room player id, or saved solo progress/timer.
+  // (These are only ever written by ACTUAL play, never by merely loading the page.)
+  function hasPriorPlay() {
+    try {
+      if (localStorage.getItem('gob_pid')) return true;
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.indexOf('G2_found_') === 0 || k.indexOf('G2_timer_') === 0)) return true;
+      }
+    } catch {}
+    return false;
+  }
+
+  function shouldShow() {
+    const p = new URLSearchParams(location.search);
+    if (p.get('room')) return false;
+    if (p.has('tutorial')) return p.get('tutorial') !== '0';  // explicit override always wins
+    if (flag(DONE_KEY)) return false;
+    return !hasPriorPlay();   // only auto-show to genuine first-timers
+  }
+
+  // ── lifecycle ────────────────────────────────────────────────────────────
+  function start() {
+    if (active) return;
+    active = true; solved = false; stepIndex = 0;
+    // A fresh walkthrough means a fresh player → replay the in-game coach marks too.
+    clearFlag(HINT_START); clearFlag(HINT_USAGE);
+    document.body.classList.add('tutorial-active');
+    const loader = $('loader'); if (loader) loader.style.display = 'none';
+    positionOverlay();
+    $('tutorial-overlay').classList.add('visible');
+    const skip = $('tut-skip-btn'); if (skip) skip.style.display = '';
+    bindListeners();
+    loadStep(0);
+    window.addEventListener('resize', onResize);
+  }
+
+  function finish() {
+    if (!active) return;
+    active = false;
+    clearIdle(); stopDemo(); removeVsRing();
+    if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+    setFlag(DONE_KEY);
+    $('tutorial-overlay').classList.remove('visible');
+    const skip = $('tut-skip-btn'); if (skip) skip.style.display = 'none';
+    document.body.classList.remove('tutorial-active');
+    window.removeEventListener('resize', onResize);
+    // Reveal today's puzzle. The board has been loading behind the opaque overlay
+    // via the normal init path; size it correctly now that it's visible.
+    if (typeof updateCellSize === 'function') requestAnimationFrame(updateCellSize);
+    revealBoard();
+  }
+
+  // Reveal the real daily board once the normal init has produced one. We poll
+  // rather than fire a fixed timer so we never kick off a SECOND concurrent load
+  // while init's (up to 5s) Firebase read is still in flight — that would race on
+  // shared globals (foundWords/boardCells). Only if init is fully done with no
+  // board (~7s, well past the 5s FB timeout) do we fetch today's as a last resort.
+  function revealBoard() {
+    const hasBoard = () => {
+      try {
+        const grid = document.getElementById('grid');
+        const rendered = grid && grid.children.length > 0;   // renderBoard() has actually run
+        const cells = Array.isArray(boardCells) && boardCells.length > 0 && boardCells.some(row => row && row.some(Boolean));
+        return rendered && cells;
+      } catch { return false; }
+    };
+    if (hasBoard()) { if (typeof updateCellSize === 'function') requestAnimationFrame(updateCellSize); return; }
+    let waited = 0;
+    const poll = setInterval(() => {
+      waited += 400;
+      if (hasBoard()) {
+        clearInterval(poll);
+        if (typeof updateCellSize === 'function') updateCellSize();
+      } else if (waited >= 7000) {           // init has long since settled → safe, no race
+        clearInterval(poll);
+        if (typeof loadTodaysPuzzle === 'function') loadTodaysPuzzle();
+      }
+    }, 400);
+  }
+
+  function tutSkip() { finish(); }
+  window.tutSkip = tutSkip;
+
+  function positionOverlay() {
+    const h = document.querySelector('header')?.offsetHeight || 67;
+    $('tutorial-overlay').style.top = h + 'px';
+  }
+
+  // ── step rendering ────────────────────────────────────────────────────────
+  function renderProgress() {
+    const prog = $('tut-progress');
+    prog.innerHTML = '';
+    STEPS.forEach((_, i) => {
+      const d = document.createElement('div');
+      d.className = 'tut-dot' + (i === stepIndex ? ' active' : i < stepIndex ? ' done' : '');
+      prog.appendChild(d);
+    });
+  }
+
+  function loadStep(i) {
+    if (!active) return;   // never render a step after Skip/finish
+    stepIndex = i; solved = false; demoActive = false; selecting = false; path = [];
+    const step = STEPS[i];
+    $('tut-text').innerHTML = step.text;
+    const w = $('tut-word'); w.textContent = ''; w.classList.remove('success');
+    $('tut-hint-label').textContent = '';
+    renderProgress();
+    renderTutBoard(step);
+    clearSvg();
+    removeVsRing();
+    if (step.highlightVs) addVsRing();
+    clearIdle();
+    if (step.animate) idleTimer = setTimeout(triggerDemo, IDLE_MS);
+  }
+
+  function renderTutBoard(step) {
+    const grid = $('tut-grid');
+    grid.style.gridTemplateColumns = `repeat(${step.cols}, 1fr)`;
+    grid.innerHTML = '';
+    cellEls = [];
+    for (let r = 0; r < step.rows; r++) {
+      cellEls[r] = [];
+      for (let c = 0; c < step.cols; c++) {
+        const letter = step.cells[r]?.[c] ?? null;
+        const cell = document.createElement('div');
+        if (letter) {
+          cell.className = 'grid-cell tut-cell';
+          cell.textContent = letter;
+          cellEls[r][c] = cell;
+        } else {
+          cell.className = 'grid-cell tut-cell empty';
+          cellEls[r][c] = null;
+        }
+        grid.appendChild(cell);
+      }
+    }
+    sizeBoard(step);
+  }
+
+  function sizeBoard(step) {
+    const gap = 8;
+    const headerH = document.querySelector('header')?.offsetHeight || 67;
+    const availW = Math.min(window.innerWidth - 40, 440);
+    const availH = Math.max(120, window.innerHeight - headerH - 250);
+    const fromW = (availW - (step.cols - 1) * gap) / step.cols;
+    const fromH = (availH - (step.rows - 1) * gap) / step.rows;
+    let cell = Math.floor(Math.min(fromW, fromH));
+    cell = Math.max(34, Math.min(cell, 68));
+    const font = Math.max(1, cell / 29);
+    const board = $('tut-board');
+    board.style.setProperty('--tut-cell', cell + 'px');
+    board.style.setProperty('--tut-font', font + 'rem');
+  }
+
+  function onResize() {
+    if (!active) return;
+    positionOverlay();
+    sizeBoard(STEPS[stepIndex]);
+    if (STEPS[stepIndex].highlightVs) addVsRing();
+    if (selecting) drawPath();
+    else if (demoActive && demoRAF) {
+      // Debounce: only re-seed the demo geometry once the resize storm settles,
+      // so the finger isn't perpetually restarted mid-sweep on mobile.
+      clearTimeout(resizeDemoTimer);
+      resizeDemoTimer = setTimeout(() => { if (active && demoActive && !selecting && !solved) triggerDemo(); }, 160);
+    }
+  }
+
+  // ── geometry / hit detection (circle, matches the main game) ──────────────
+  function cellAtPoint(px, py) {
+    const step = STEPS[stepIndex];
+    for (let r = 0; r < step.rows; r++)
+      for (let c = 0; c < step.cols; c++) {
+        const el = cellEls[r]?.[c];
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+        if ((px - cx) ** 2 + (py - cy) ** 2 <= (rect.width * 0.45) ** 2) return { r, c };
+      }
+    return null;
+  }
+
+  function cellCenter(r, c) {
+    const cRect = $('tut-board').getBoundingClientRect();
+    const rect = cellEls[r][c].getBoundingClientRect();
+    return { x: rect.left + rect.width / 2 - cRect.left, y: rect.top + rect.height / 2 - cRect.top };
+  }
+
+  function cellRadiusPx() {
+    const step = STEPS[stepIndex];
+    for (let r = 0; r < step.rows; r++) for (let c = 0; c < step.cols; c++) if (cellEls[r]?.[c]) return cellEls[r][c].getBoundingClientRect().width / 2;
+    return 27;
+  }
+
+  // ── pointer handling ──────────────────────────────────────────────────────
+  function bindListeners() {
+    if (listenersBound) return;
+    listenersBound = true;
+    const bc = $('tut-board');
+    bc.addEventListener('mousedown',  e => { if (!active) return; const h = cellAtPoint(e.clientX, e.clientY); if (h) startSel(h.r, h.c); });
+    window.addEventListener('mousemove', e => { if (!active || !selecting) return; const h = cellAtPoint(e.clientX, e.clientY); if (h) hover(h.r, h.c); });
+    window.addEventListener('mouseup', () => { if (active) endSel(); });
+    bc.addEventListener('touchstart', e => { if (!active) return; e.preventDefault(); const t = e.touches[0]; const h = cellAtPoint(t.clientX, t.clientY); if (h) startSel(h.r, h.c); }, { passive: false });
+    bc.addEventListener('touchmove',  e => { if (!active || !selecting) return; e.preventDefault(); const t = e.touches[0]; const h = cellAtPoint(t.clientX, t.clientY); if (h) hover(h.r, h.c); }, { passive: false });
+    bc.addEventListener('touchend', () => { if (active) endSel(); });
+  }
+
+  function startSel(r, c) {
+    if (solved) return;
+    selecting = true;
+    path = [{ r, c }];
+    stopDemo();   // the player is attempting → drop the demo
+    clearIdle();  // and stop the idle countdown while they interact
+    drawPath();
+  }
+
+  function hover(r, c) {
+    const last = path[path.length - 1];
+    if (last.r === r && last.c === c) return;
+    if (Math.abs(last.r - r) <= 1 && Math.abs(last.c - c) <= 1) { path.push({ r, c }); drawPath(); }
+  }
+
+  function endSel() {
+    if (!selecting) return;
+    selecting = false;
+    const step = STEPS[stepIndex];
+    const word = path.map(({ r, c }) => step.cells[r][c]).join('');
+    const ok = word === step.target;
+    for (let r = 0; r < step.rows; r++) for (let c = 0; c < step.cols; c++) cellEls[r]?.[c]?.classList.remove('active');
+    clearSvg();
+    path = [];
+    if (ok) { onSolved(); return; }
+    $('tut-word').textContent = '';
+    if (step.animate) {
+      if (demoActive) triggerDemo();                          // already demoing → resume
+      else { clearIdle(); idleTimer = setTimeout(triggerDemo, IDLE_MS); }  // re-arm the 15s wait
+    }
+  }
+
+  function onSolved() {
+    solved = true;
+    clearIdle(); stopDemo(); removeVsRing();
+    const w = $('tut-word');
+    w.textContent = STEPS[stepIndex].target;
+    w.classList.add('success');
+    $('tut-hint-label').textContent = '';
+    advanceTimer = setTimeout(() => {
+      advanceTimer = null;
+      if (!active) return;   // Skip/finish during the success flash → don't advance
+      if (stepIndex < STEPS.length - 1) loadStep(stepIndex + 1);
+      else finish();
+    }, 950);
+  }
+
+  // ── path drawing (mirrors the game's updatePathUI) ────────────────────────
+  function drawPath() {
+    const step = STEPS[stepIndex];
+    $('tut-word').textContent = path.map(({ r, c }) => step.cells[r][c]).join('');
+    for (let r = 0; r < step.rows; r++)
+      for (let c = 0; c < step.cols; c++)
+        cellEls[r]?.[c]?.classList.toggle('active', path.some(p => p.r === r && p.c === c));
+    drawLines(path.map(p => cellCenter(p.r, p.c)), null);
+  }
+
+  function clearSvg() { const svg = $('tut-svg'); while (svg.firstChild) svg.removeChild(svg.firstChild); }
+
+  // pts: array of {x,y}; head: optional {x,y} marker for the demo "finger".
+  function drawLines(pts, head) {
+    const svg = $('tut-svg');
+    clearSvg();
+    const cellRadius = cellRadiusPx();
+    if (pts.length >= 2) {
+      const lastP = pts[pts.length - 1], prevP = pts[pts.length - 2];
+      const dx = lastP.x - prevP.x, dy = lastP.y - prevP.y, dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const ux = dx / dist, uy = dy / dist;
+      const defs = document.createElementNS(NS, 'defs');
+      const grad = document.createElementNS(NS, 'linearGradient');
+      grad.setAttribute('id', 'tut-seg-grad'); grad.setAttribute('gradientUnits', 'userSpaceOnUse');
+      grad.setAttribute('x1', prevP.x + ux * cellRadius); grad.setAttribute('y1', prevP.y + uy * cellRadius);
+      grad.setAttribute('x2', lastP.x - ux * cellRadius); grad.setAttribute('y2', lastP.y - uy * cellRadius);
+      const s1 = document.createElementNS(NS, 'stop'); s1.setAttribute('offset', '0%');   s1.setAttribute('stop-color', '#fed7aa');
+      const s2 = document.createElementNS(NS, 'stop'); s2.setAttribute('offset', '100%'); s2.setAttribute('stop-color', '#9a3412');
+      grad.appendChild(s1); grad.appendChild(s2); defs.appendChild(grad); svg.appendChild(defs);
+      pts.forEach((p, i) => {
+        if (i === 0) return;
+        const isLast = i === pts.length - 1;
+        const line = document.createElementNS(NS, 'line');
+        line.setAttribute('x1', pts[i - 1].x); line.setAttribute('y1', pts[i - 1].y);
+        line.setAttribute('x2', p.x); line.setAttribute('y2', p.y);
+        line.setAttribute('stroke', isLast ? 'url(#tut-seg-grad)' : '#fed7aa');
+        line.setAttribute('stroke-width', '7'); line.setAttribute('stroke-linecap', 'round');
+        line.setAttribute('opacity', isLast ? '1' : '0.5');
+        svg.appendChild(line);
+      });
+    }
+    if (head) {
+      const ro = Math.max(9, cellRadius * 0.55), ri = Math.max(5, cellRadius * 0.3);
+      const outer = document.createElementNS(NS, 'circle');
+      outer.setAttribute('cx', head.x); outer.setAttribute('cy', head.y); outer.setAttribute('r', ro);
+      outer.setAttribute('fill', 'rgba(194,65,12,0.18)');
+      svg.appendChild(outer);
+      const inner = document.createElementNS(NS, 'circle');
+      inner.setAttribute('cx', head.x); inner.setAttribute('cy', head.y); inner.setAttribute('r', ri);
+      inner.setAttribute('fill', '#c2410c');
+      svg.appendChild(inner);
+    }
+  }
+
+  // ── demo (animated hint) ──────────────────────────────────────────────────
+  function triggerDemo() {
+    const step = STEPS[stepIndex];
+    if (!active || solved || selecting || !step.animate) return;
+    demoActive = true;
+    $('tut-hint-label').textContent = 'Like this —';
+    stopDemoRAF();
+    const t0 = performance.now();
+    const fullPts = step.path.map(([r, c]) => cellCenter(r, c));
+    const segLen = [];
+    let total = 0;
+    for (let i = 1; i < fullPts.length; i++) {
+      const d = Math.hypot(fullPts[i].x - fullPts[i - 1].x, fullPts[i].y - fullPts[i - 1].y);
+      segLen.push(d); total += d;
+    }
+    function frame(now) {
+      if (!active || solved || selecting) return;
+      const t = (now - t0) % CYCLE_MS;
+      const f = Math.min(t / SWEEP_MS, 1);   // sweep, then hold full path until the loop resets
+      renderDemoFrame(step, fullPts, segLen, total, f);
+      demoRAF = requestAnimationFrame(frame);
+    }
+    demoRAF = requestAnimationFrame(frame);
+  }
+
+  function renderDemoFrame(step, fullPts, segLen, total, f) {
+    let head, reachedIdx;
+    if (f >= 1 || total === 0) {
+      head = fullPts[fullPts.length - 1];
+      reachedIdx = fullPts.length - 1;
+    } else {
+      const target = f * total;
+      let acc = 0, i = 0;
+      while (i < segLen.length && acc + segLen[i] < target) { acc += segLen[i]; i++; }
+      const local = segLen[i] ? (target - acc) / segLen[i] : 0;
+      head = {
+        x: fullPts[i].x + (fullPts[i + 1].x - fullPts[i].x) * local,
+        y: fullPts[i].y + (fullPts[i + 1].y - fullPts[i].y) * local,
+      };
+      reachedIdx = i;   // points 0..i are reached; head is partway toward i+1
+    }
+    const activeKeys = new Set();
+    for (let k = 0; k <= reachedIdx; k++) { const [r, c] = step.path[k]; activeKeys.add(r + ',' + c); }
+    for (let r = 0; r < step.rows; r++)
+      for (let c = 0; c < step.cols; c++)
+        cellEls[r]?.[c]?.classList.toggle('active', activeKeys.has(r + ',' + c));
+    const linePts = fullPts.slice(0, reachedIdx + 1);
+    const tail = linePts[linePts.length - 1];
+    if (!tail || tail.x !== head.x || tail.y !== head.y) linePts.push(head);
+    drawLines(linePts, head);
+  }
+
+  function stopDemoRAF() { if (demoRAF) { cancelAnimationFrame(demoRAF); demoRAF = null; } }
+  function stopDemo() {
+    stopDemoRAF();
+    if (resizeDemoTimer) { clearTimeout(resizeDemoTimer); resizeDemoTimer = null; }
+    $('tut-hint-label').textContent = '';
+    const step = STEPS[stepIndex];
+    for (let r = 0; r < step.rows; r++) for (let c = 0; c < step.cols; c++) cellEls[r]?.[c]?.classList.remove('active');
+    clearSvg();
+  }
+  function clearIdle() { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } }
+
+  // ── VS / room button highlight ────────────────────────────────────────────
+  function addVsRing() {
+    const btn = $('start-room-btn');
+    if (!btn) return;
+    btn.classList.add('tut-vs-pulse');
+    let ring = $('tut-vs-ring');
+    if (!ring) { ring = document.createElement('div'); ring.id = 'tut-vs-ring'; document.body.appendChild(ring); }
+    const rect = btn.getBoundingClientRect();
+    const size = Math.max(rect.width, rect.height) + 16;
+    ring.style.width = size + 'px';
+    ring.style.height = size + 'px';
+    ring.style.left = (rect.left + rect.width / 2 - size / 2) + 'px';
+    ring.style.top  = (rect.top + rect.height / 2 - size / 2) + 'px';
+  }
+  function removeVsRing() {
+    const ring = $('tut-vs-ring'); if (ring) ring.remove();
+    const btn = $('start-room-btn'); if (btn) btn.classList.remove('tut-vs-pulse');
+  }
+
+  // ── In-game coach marks ───────────────────────────────────────────────────
+  function coach(html, onOk) {
+    const modal = $('tut-coach');
+    $('tut-coach-text').innerHTML = html;
+    modal.classList.add('visible');
+    const okBtn = $('tut-coach-ok');
+    okBtn.onclick = () => {
+      modal.classList.remove('visible');
+      okBtn.onclick = null;
+      if (typeof onOk === 'function') onOk();
+    };
+  }
+
+  // Called from endSelection after a genuine new solo find (so it only fires on
+  // an actual threshold crossing, never on load/restore). One coach per call.
+  function progressCheck() {
+    if (active) return;            // never during the walkthrough overlay
+    if (typeof roomMode !== 'undefined' && roomMode) return;
+    let total = 0, found = 0;
+    try { total = validWords.size; found = foundWords.size; } catch { return; }
+    if (!total) return;
+    const pct = found / total;
+    if (pct > 0.15 && !flag(HINT_START)) {
+      setFlag(HINT_START);
+      coach('The <b>orange numbers</b> represent how many words start with that letter. This will narrow down finding the remaining words.');
+      return;
+    }
+    if (pct > 0.35 && !flag(HINT_USAGE)) {
+      setFlag(HINT_USAGE);
+      coach(
+        'The <b>grey numbers</b> represent how many time each letter is used in the rest of all words. This will narrow it down a little bit more!',
+        () => coach("Pressing the <b>'Found'</b> readout shows your word finding progress. You can sort your found words different ways. If you're struggling, scroll to the bottom of this dialog to expose some hints! Share your progress with the feathery share button. You're all set to go, happy Gobbling!")
+      );
+    }
+  }
+  window.tutProgressCheck = progressCheck;
+
+  // ── boot ──────────────────────────────────────────────────────────────────
+  window.addEventListener('DOMContentLoaded', () => { if (shouldShow()) start(); });
+})();
 </script>
 </body>
 </html>

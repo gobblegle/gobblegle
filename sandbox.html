@@ -482,12 +482,23 @@
     <div id="loader-text">Loading Dictionary…</div>
 </div>
 <script>
-    // Sandbox tutorial: pre-hide the loader for first-time visitors so the
-    // walkthrough appears instantly with no spinner flash. Mirrors tutShouldShow().
+    // Tutorial onboarding: pre-hide the loader for genuine first-time visitors so the
+    // walkthrough appears instantly with no spinner flash. Mirrors shouldShow() below.
     try {
         const _tp = new URLSearchParams(location.search);
-        const _willTutorial = !_tp.get('room') &&
-            (_tp.has('tutorial') ? _tp.get('tutorial') !== '0' : localStorage.getItem('G2_tutorial_done') !== '1');
+        let _willTutorial = false;
+        if (!_tp.get('room')) {
+            if (_tp.has('tutorial')) {
+                _willTutorial = _tp.get('tutorial') !== '0';
+            } else if (localStorage.getItem('G2_tutorial_done') !== '1') {
+                let _played = !!localStorage.getItem('gob_pid');
+                for (let i = 0; !_played && i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if (k && (k.indexOf('G2_found_') === 0 || k.indexOf('G2_timer_') === 0)) _played = true;
+                }
+                _willTutorial = !_played;
+            }
+        }
         if (_willTutorial) document.getElementById('loader').style.display = 'none';
     } catch {}
 </script>
@@ -3630,7 +3641,7 @@ function showPanel(panel) {
 
 <script>
 /* ════════════════════════════════════════════════════════════════════════════
-   TUTORIAL MODE (sandbox only)
+   TUTORIAL MODE / ONBOARDING
    A self-contained first-run walkthrough plus three in-game coach marks. It
    reuses the game's visual styles but runs its OWN board, pointer handling,
    validation and demo animation, so it never touches the live game state.
@@ -3650,7 +3661,7 @@ function showPanel(panel) {
   const DONE_KEY    = 'G2_tutorial_done';
   const HINT_START  = 'G2_tut_hint_start';   // orange-numbers coach shown
   const HINT_USAGE  = 'G2_tut_hint_usage';   // grey-numbers + Found coach shown
-  const IDLE_MS  = 15000;  // wait this long with no solve before demoing
+  const IDLE_MS  = 7000;   // wait this long with no solve before demoing
   const CYCLE_MS = 5000;   // one full demo loop
   const SWEEP_MS = 3800;   // time the "finger" takes to trace the path (then holds)
 
@@ -3715,11 +3726,26 @@ function showPanel(panel) {
   const setFlag = k => { try { localStorage.setItem(k, '1'); } catch {} };
   const clearFlag = k => { try { localStorage.removeItem(k); } catch {} };
 
+  // True for anyone who has already played — so established players aren't forced
+  // through onboarding. Signals: a room player id, or saved solo progress/timer.
+  // (These are only ever written by ACTUAL play, never by merely loading the page.)
+  function hasPriorPlay() {
+    try {
+      if (localStorage.getItem('gob_pid')) return true;
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.indexOf('G2_found_') === 0 || k.indexOf('G2_timer_') === 0)) return true;
+      }
+    } catch {}
+    return false;
+  }
+
   function shouldShow() {
     const p = new URLSearchParams(location.search);
     if (p.get('room')) return false;
-    if (p.has('tutorial')) return p.get('tutorial') !== '0';
-    return !flag(DONE_KEY);
+    if (p.has('tutorial')) return p.get('tutorial') !== '0';  // explicit override always wins
+    if (flag(DONE_KEY)) return false;
+    return !hasPriorPlay();   // only auto-show to genuine first-timers
   }
 
   // ── lifecycle ────────────────────────────────────────────────────────────
