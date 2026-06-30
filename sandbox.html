@@ -1952,6 +1952,7 @@ function endSelection() {
         } else {
             preview.textContent = 'Invalid word';
             preview.classList.add('error','small');
+            if (!roomMode && typeof tutWrongCheck === 'function') tutWrongCheck();
             preview._fadeTimer = setTimeout(() => {
                 preview.textContent = word;
                 preview.classList.remove('small');
@@ -3684,13 +3685,14 @@ function showPanel(panel) {
    reuses the game's visual styles but runs its OWN board, pointer handling,
    validation and demo animation, so it never touches the live game state.
 
-   • Walkthrough: 4 swipe puzzles. After 15s idle on an animated step the swipe
+   • Walkthrough: 4 swipe puzzles. After 7s idle on an animated step the swipe
      path is demonstrated on a 5s repeating loop; it stops the moment the player
      attempts the puzzle and resumes if they lift without solving.
    • Completion is remembered in localStorage (G2_tutorial_done) so returning
      players skip straight to today's puzzle.
-   • Coach marks fire the first time a player crosses the orange-number and
-     grey-number tile-hint thresholds during real solo play.
+   • Coach marks fire during real solo play: the orange-number and grey-number
+     tips on crossing those tile-hint thresholds, and the "Found readout / hints"
+     tip after the player spells 5 invalid words.
 
    Testing: visit ?tutorial (or ?tutorial=1) to force the whole onboarding to
    replay; ?tutorial=0 forces it off.
@@ -3698,7 +3700,9 @@ function showPanel(panel) {
 (function () {
   const DONE_KEY    = 'G2_tutorial_done';
   const HINT_START  = 'G2_tut_hint_start';   // orange-numbers coach shown
-  const HINT_USAGE  = 'G2_tut_hint_usage';   // grey-numbers + Found coach shown
+  const HINT_USAGE  = 'G2_tut_hint_usage';   // grey-numbers coach shown
+  const HINT_FOUND  = 'G2_tut_hint_found';   // "Found readout / hints" coach shown
+  const WRONG_KEY   = 'G2_tut_wrong';        // running count of invalid words spelled
   const IDLE_MS  = 7000;   // wait this long with no solve before demoing
   const CYCLE_MS = 5000;   // one full demo loop
   const SWEEP_MS = 3800;   // time the "finger" takes to trace the path (then holds)
@@ -3727,12 +3731,16 @@ function showPanel(panel) {
       animate: true,
     },
     {
-      text: 'Words must be at least 4 letters long. The longer the word, the more points you get.',
-      rows: 1, cols: 4,
-      cells: [['N','E','X','T']],
-      target: 'NEXT',
-      path: [[0,0],[0,1],[0,2],[0,3]],
-      animate: false,
+      text: 'Words must be at least four letters long. The longer the word, the more points you get. Spell <b>GRAMMATICAL</b>.',
+      rows: 3, cols: 3,
+      cells: [
+        ['G','R','M'],
+        ['C','A','M'],
+        ['L','I','T'],
+      ],
+      target: 'GRAMMATICAL',
+      path: [[0,0],[0,1],[1,1],[1,2],[0,2],[1,1],[2,2],[2,1],[1,0],[1,1],[2,0]],
+      animate: true,
     },
     {
       text: "Check out <b>VERSUS</b> mode to battle it out with your friends. Simply start a room and share the link, or join an already existing room. You're all set! Swipe <b>PLAY</b> to start!",
@@ -3791,7 +3799,7 @@ function showPanel(panel) {
     if (active) return;
     active = true; solved = false; stepIndex = 0;
     // A fresh walkthrough means a fresh player → replay the in-game coach marks too.
-    clearFlag(HINT_START); clearFlag(HINT_USAGE);
+    clearFlag(HINT_START); clearFlag(HINT_USAGE); clearFlag(HINT_FOUND); clearFlag(WRONG_KEY);
     document.body.classList.add('tutorial-active');
     const loader = $('loader'); if (loader) loader.style.display = 'none';
     positionOverlay();
@@ -4185,13 +4193,25 @@ function showPanel(panel) {
     }
     if (pct > 0.35 && !flag(HINT_USAGE)) {
       setFlag(HINT_USAGE);
-      coach(
-        'The <b>grey numbers</b> represent how many time each letter is used in the rest of all words. This will narrow it down a little bit more!',
-        () => coach("Pressing the <b>'Found'</b> readout shows your word finding progress. You can sort your found words different ways. If you're struggling, scroll to the bottom of this dialog to expose some hints! Share your progress with the feathery share button. You're all set to go, happy Gobbling!")
-      );
+      coach('The <b style="color:var(--word-already)">grey numbers</b> represent how many times each letter is used in the remaining words. This will narrow it down a little bit more!');
     }
   }
   window.tutProgressCheck = progressCheck;
+
+  // The "Found readout / hints" tip pops once the player has spelled 5 invalid
+  // words. Called from endSelection's invalid-word branch (solo play only).
+  function wrongCheck() {
+    if (active) return;            // never during the walkthrough overlay
+    if (typeof roomMode !== 'undefined' && roomMode) return;
+    if (flag(HINT_FOUND)) return;
+    let n;
+    try { n = (parseInt(localStorage.getItem(WRONG_KEY), 10) || 0) + 1; localStorage.setItem(WRONG_KEY, String(n)); } catch { return; }
+    if (n >= 5) {
+      setFlag(HINT_FOUND);
+      coach("Pressing the <b>'Found'</b> readout shows your word finding progress. You can sort your found words different ways. If you're struggling, scroll to the bottom of this dialog to expose some hints! Share your progress with the feathery share button. You're all set to go, happy Gobbling!");
+    }
+  }
+  window.tutWrongCheck = wrongCheck;
 
   // ── boot ──────────────────────────────────────────────────────────────────
   window.addEventListener('DOMContentLoaded', () => { if (shouldShow()) start(); });
