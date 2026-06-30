@@ -3689,7 +3689,7 @@ function showPanel(panel) {
       animate: true,
     },
     {
-      text: 'Words must be at least 4 letters long. The longer the word, the more the points.',
+      text: 'Words must be at least 4 letters long. The longer the word, the more points you get.',
       rows: 1, cols: 4,
       cells: [['N','E','X','T']],
       target: 'NEXT',
@@ -4041,7 +4041,7 @@ function showPanel(panel) {
     const step = STEPS[stepIndex];
     if (!active || solved || selecting || !step.animate) return;
     demoActive = true;
-    $('tut-hint-label').textContent = 'Like this —';
+    $('tut-hint-label').textContent = '';
     stopDemoRAF();
     const t0 = performance.now();
     const fullPts = step.path.map(([r, c]) => cellCenter(r, c));
