@@ -1248,7 +1248,7 @@ async function loadDictionary() {
         return;
     }
     try {
-        const res = await fetch('./in_all_three.txt');
+        const res = await fetch('./in_all_three_333k.txt');
         if (res.ok) { processDictText(await res.text()); return; }
     } catch {}
     document.getElementById('loader').innerHTML =
