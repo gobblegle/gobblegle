@@ -1422,7 +1422,7 @@ function loadProgress() {
     answersRevealed = localStorage.getItem(`G2_answers_${h}`) === '1';
     hintsUsed = new Set(safeLoadJSON(`G2_hints_used_${h}`, []));
     const saved = safeLoadJSON(`G2_timer_${h}`, {});
-    timerSeconds = saved.s || 0;
+    timerSeconds = Number(saved.s) || 0;
     updateTimerDisplay();
     if (saved.started) {
         timerStarted = true;
@@ -3641,50 +3641,63 @@ async function leaveRoom() {
     renderBoard();
 }
 
-// Render the solo game's word-count + score timeline to a PNG for the share card.
-// Words use the left axis in the theme's primary orange; score uses the right axis
-// in the theme's text colour, so the image matches light/dark. Both are cumulative
-// step lines from (0,0) that run flat out to the current clock. Resolves to a Blob,
-// or null when there isn't enough timed data (e.g. games from before timing existed).
+// Render the solo game's word-count + score timeline to a <canvas> for the share card.
+// Words use the left axis in the theme's primary orange; score uses the right axis in a
+// slightly greyed theme text colour, so the image matches light/dark. Both are cumulative
+// step lines from (0,0) that run flat out to the current clock; the WORD line is drawn on
+// top. Returns the canvas, or null when there isn't enough timed data (older games).
 function renderShareChart() {
-    if (wordEvents.length < 2) return Promise.resolve(null);
+    // Work off a sanitized copy so a corrupted/hand-edited localStorage record can't
+    // throw or produce NaN geometry (normal play never creates a bad entry).
+    const events = wordEvents.filter(e => e && typeof e.word === 'string' && Number.isFinite(e.t));
+    if (events.length < 2) return null;
+    const clock = Math.max(1, Number(timerSeconds) || 0); // elapsed seconds, coerced & clamped
 
     const cs = getComputedStyle(document.documentElement);
     const col = (name, fallback) => (cs.getPropertyValue(name).trim() || fallback);
+    // Mix a colour ~amt of the way toward mid-grey (softens the near-black score line).
+    const greyer = (c, amt) => {
+        const h = String(c).replace('#', '').trim();
+        const f = h.length === 3 ? h.split('').map(ch => ch + ch).join('') : h;
+        if (!/^[0-9a-fA-F]{6}$/.test(f)) return c;
+        const mix = v => Math.round(v + (128 - v) * amt);
+        return `rgb(${mix(parseInt(f.slice(0,2),16))}, ${mix(parseInt(f.slice(2,4),16))}, ${mix(parseInt(f.slice(4,6),16))})`;
+    };
     const C = {
         word:  col('--primary', '#c2410c'),
-        score: col('--text', '#1c0a00'),
+        score: greyer(col('--text', '#1c0a00'), 0.25), // 25% greyer — dark, but not pure black
         grid:  col('--border', '#e8d5c4'),
         muted: col('--text-muted', '#78614f'),
         bg:    col('--surface', '#ffffff'),
         hint:  '#8b5cf6', // fixed violet accent — distinct from words/score/grid, legible on light + dark
     };
 
-    const W = 600, H = 360, dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const W = 680, H = 400, dpr = Math.min(window.devicePixelRatio || 1, 2);
     const cv = document.createElement('canvas');       // offscreen — never attached to the DOM
     cv.width = W * dpr; cv.height = H * dpr;
     const ctx = cv.getContext('2d');
     ctx.scale(dpr, dpr);
     ctx.textBaseline = 'middle';
     const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    const F_LABEL = `22px ${FONT}`, F_TITLE = `24px ${FONT}`; // doubled from the original 11/12px
 
-    const padL = 52, padR = 56, padT = 40, padB = 46;
+    const padL = 74, padR = 74, padT = 20, padB = 72;
     const plotW = W - padL - padR, plotH = H - padT - padB;
     const x0 = padL, x1 = W - padR, y0 = H - padB, y1 = padT; // y0 = plot bottom, y1 = plot top
 
     ctx.fillStyle = C.bg;
     ctx.fillRect(0, 0, W, H);
 
-    // Round the x-axis up to the next whole 5 minutes; always show at least one interval.
-    const xMax = Math.max(300, Math.ceil(timerSeconds / 300) * 300);
+    // X-axis spans the ACTUAL elapsed time (not rounded); ticks still fall on 5-min marks.
+    const xMax = clock;
     const niceCeil = (v) => {
         if (v <= 0) return 1;
         const p = Math.pow(10, Math.floor(Math.log10(v)));
         const n = v / p;
         return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p;
     };
-    const wordMax  = niceCeil(wordEvents.length);
-    const scoreMax = niceCeil(wordEvents.reduce((s, e) => s + wordScore(e.word.length), 0));
+    const wordMax  = niceCeil(events.length);
+    const scoreMax = niceCeil(events.reduce((s, e) => s + wordScore(e.word.length), 0));
 
     const X  = (t) => x0 + (t / xMax) * plotW;
     const Yw = (c) => y0 - (c / wordMax)  * plotH;   // word count → left scale
@@ -3692,105 +3705,92 @@ function renderShareChart() {
 
     // Horizontal gridlines with dual Y labels: words (orange) left, score (dark) right.
     const ROWS = 5;
-    ctx.lineWidth = 1;
-    ctx.font = `11px ${FONT}`;
+    ctx.lineWidth = 1.5;
+    ctx.font = F_LABEL;
     for (let i = 0; i <= ROWS; i++) {
         const y = y0 - (i / ROWS) * plotH;
         ctx.strokeStyle = C.grid;
         ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
-        ctx.fillStyle = C.word;  ctx.textAlign = 'right'; ctx.fillText(String(Math.round((i / ROWS) * wordMax)),  x0 - 6, y);
-        ctx.fillStyle = C.score; ctx.textAlign = 'left';  ctx.fillText(String(Math.round((i / ROWS) * scoreMax)), x1 + 6, y);
+        ctx.fillStyle = C.word;  ctx.textAlign = 'right'; ctx.fillText(String(Math.round((i / ROWS) * wordMax)),  x0 - 10, y);
+        ctx.fillStyle = C.score; ctx.textAlign = 'left';  ctx.fillText(String(Math.round((i / ROWS) * scoreMax)), x1 + 10, y);
     }
 
-    // X ticks at every 5-minute mark; thin only the labels when the game runs long.
-    const intervals = xMax / 300;
-    const labelEvery = Math.ceil(intervals / 8);
+    // Ticks at every 5-minute mark that falls within the elapsed time; thin the labels
+    // (not the ticks) when the game runs long.
+    const lastTick = Math.floor(xMax / 300);
+    const labelEvery = Math.max(1, Math.ceil((lastTick + 1) / 8));
     ctx.textAlign = 'center';
-    for (let i = 0; i <= intervals; i++) {
+    for (let i = 0; i <= lastTick; i++) {
         const x = X(i * 300);
         ctx.strokeStyle = C.grid;
-        ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y0 + 4); ctx.stroke();
-        if (i % labelEvery === 0) { ctx.fillStyle = C.muted; ctx.fillText(String(i * 5), x, y0 + 18); }
+        ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y0 + 6); ctx.stroke();
+        if (i % labelEvery === 0) { ctx.fillStyle = C.muted; ctx.fillText(String(i * 5), x, y0 + 26); }
     }
 
     // Left + bottom axis frame.
-    ctx.strokeStyle = C.grid;
+    ctx.strokeStyle = C.grid; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(x0, y1); ctx.lineTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
 
     // Cumulative step lines, clipped to the plot, each ending flat at the current clock.
     ctx.save();
     ctx.beginPath(); ctx.rect(x0, y1, plotW, plotH); ctx.clip();
+    const clampX = (t) => X(Math.max(0, Math.min(t, xMax)));
     const drawStep = (yFn, stepOf, color) => {
-        ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
+        ctx.strokeStyle = color; ctx.lineWidth = 3.5; ctx.lineJoin = 'round';
         ctx.beginPath();
         let cum = 0;
-        ctx.moveTo(X(0), yFn(0));
-        for (const e of wordEvents) {
-            ctx.lineTo(X(e.t), yFn(cum));   // across to the event time
+        ctx.moveTo(clampX(0), yFn(0));
+        for (const e of events) {
+            const ex = clampX(e.t);
+            ctx.lineTo(ex, yFn(cum));       // across to the event time
             cum += stepOf(e);
-            ctx.lineTo(X(e.t), yFn(cum));   // step up
+            ctx.lineTo(ex, yFn(cum));       // step up
         }
-        ctx.lineTo(X(timerSeconds), yFn(cum)); // flat out to "now"
+        ctx.lineTo(clampX(clock), yFn(cum)); // flat out to "now"
         ctx.stroke();
     };
-    drawStep(Yw, () => 1, C.word);
-    drawStep(Ys, (e) => wordScore(e.word.length), C.score);
+    drawStep(Ys, (e) => wordScore(e.word.length), C.score); // score underneath
+    drawStep(Yw, () => 1, C.word);                          // words on top
     ctx.restore();
 
-    // Hint markers — a visibly different tick at each moment a hint was used: a faint
-    // dashed guide up through the plot, tipped with a solid violet triangle sitting on
-    // the time axis (distinct in colour AND shape from the plain grey 5-minute ticks).
-    const drawnHintX = [];
+    // Hint markers — a violet triangle on the time axis at each hint, with a faint dashed
+    // guide up through the plot (distinct in colour AND shape from the grey 5-min ticks).
+    // Hints close together STACK upward on top of each other so each one stays countable.
+    const th = 14, tw = 8, gap = 3;      // triangle height / half-width / stack gap
+    const cols = [];                     // x of already-placed markers → gives the stack level
     for (const e of hintEvents) {
         if (!Number.isFinite(e.t)) continue;
         const x = X(Math.max(0, Math.min(e.t, xMax)));
-        if (drawnHintX.some(px => Math.abs(px - x) < 9)) continue; // collapse near-coincident hints into one marker
-        drawnHintX.push(x);
-        ctx.strokeStyle = C.hint; ctx.globalAlpha = 0.4; ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
-        ctx.setLineDash([]); ctx.globalAlpha = 1;
+        const level = Math.min(3, cols.filter(px => Math.abs(px - x) < 2 * tw).length);
+        cols.push(x);
+        if (level === 0) {               // one dashed guide per column
+            ctx.strokeStyle = C.hint; ctx.globalAlpha = 0.4; ctx.lineWidth = 2.5;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
+            ctx.setLineDash([]); ctx.globalAlpha = 1;
+        }
+        const baseY = y0 - level * (th + gap); // stack upward from the axis
         ctx.fillStyle = C.hint;
         ctx.beginPath();
-        ctx.moveTo(x, y0);            // tip on the axis
-        ctx.lineTo(x - 4.5, y0 + 8);  // base-left, just below the axis
-        ctx.lineTo(x + 4.5, y0 + 8);  // base-right, just below the axis
+        ctx.moveTo(x, baseY - th);       // tip (points up)
+        ctx.lineTo(x - tw, baseY);       // base-left, on/above the axis
+        ctx.lineTo(x + tw, baseY);       // base-right
         ctx.closePath(); ctx.fill();
     }
 
-    // Legend (top-left).
-    ctx.font = `12px ${FONT}`;
-    ctx.textAlign = 'left';
-    const legY = padT / 2;
-    let lx = x0;
-    const swatch = (color, label) => {
-        ctx.fillStyle = color; ctx.fillRect(lx, legY - 5, 14, 10);
-        ctx.fillStyle = C.muted; ctx.fillText(label, lx + 20, legY);
-        lx += 20 + ctx.measureText(label).width + 22;
-    };
-    swatch(C.word, 'Words');
-    swatch(C.score, 'Score');
-    if (hintEvents.length) {
-        const ly = legY;
-        ctx.strokeStyle = C.hint; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]);
-        ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx + 14, ly); ctx.stroke(); ctx.setLineDash([]);
-        ctx.fillStyle = C.hint;
-        ctx.beginPath(); ctx.moveTo(lx + 7, ly - 5); ctx.lineTo(lx + 3, ly + 3); ctx.lineTo(lx + 11, ly + 3); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = C.muted; ctx.textAlign = 'left'; ctx.fillText('Hint', lx + 20, ly);
-    }
-
-    // Axis titles.
+    // Axis titles (no top legend — the coloured axis labels identify each series).
+    ctx.font = F_TITLE;
     ctx.fillStyle = C.muted; ctx.textAlign = 'center';
-    ctx.fillText('Time (min)', x0 + plotW / 2, H - 8);
-    ctx.save(); ctx.translate(12, y1 + plotH / 2); ctx.rotate(-Math.PI / 2);
+    ctx.fillText('Time (min)', x0 + plotW / 2, H - 16);
+    ctx.save(); ctx.translate(20, y1 + plotH / 2); ctx.rotate(-Math.PI / 2);
     ctx.fillStyle = C.word;  ctx.fillText('Words', 0, 0); ctx.restore();
-    ctx.save(); ctx.translate(W - 12, y1 + plotH / 2); ctx.rotate(Math.PI / 2);
+    ctx.save(); ctx.translate(W - 20, y1 + plotH / 2); ctx.rotate(Math.PI / 2);
     ctx.fillStyle = C.score; ctx.fillText('Score', 0, 0); ctx.restore();
 
-    return new Promise((resolve) => cv.toBlob((b) => resolve(b), 'image/png'));
+    return cv;
 }
 
-async function shareGame() {
+function shareGame() {
     if (roomMode) return;
     // Report exactly what the on-screen timer shows (same source the display uses).
     const timeStr = formatTime(timerSeconds);
@@ -3808,22 +3808,34 @@ async function shareGame() {
     const hintLine = `${hintWords[n] ?? n} hint${n === 1 ? '' : 's'} used`;
     const text = `🦃 I played Gobblegle! 🦃\n${dateStr}\nFound: ${foundWords.size}/${validWords.size}\nScore: ${score}\n${timeStr}\n${hintLine}\nhttps://gobblegle.com`;
     // Preview the shareable card: the text summary on top, the words + score chart
-    // below (null when there isn't enough timed data → text-only card).
-    const blob = await renderShareChart();
-    openShareModal(text, blob);
+    // below. Rendered synchronously to a canvas — this avoids an iOS Safari
+    // canvas.toBlob() callback hang that left mobile shares blank. null → text-only.
+    let canvas = null;
+    try { canvas = renderShareChart(); } catch (err) { canvas = null; }
+    openShareModal(text, canvas);
+}
+
+// Convert a data URL to a Blob synchronously (atob is universally supported, unlike
+// canvas.toBlob on some iOS Safari versions) so we can build a shareable File.
+function dataURLToBlob(dataURL) {
+    const [head, b64] = dataURL.split(',');
+    const mime = (head.match(/:(.*?);/) || [])[1] || 'image/png';
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
 }
 
 // Preview modal for the share card. Shows the text summary on top and the chart
 // (if any) below, with Share / Save / Copy actions. Sharing sends image + text
 // together where the platform supports files, else falls back to text.
-function openShareModal(text, blob) {
+function openShareModal(text, canvas) {
     document.getElementById('share-modal-overlay')?.remove();
 
     const overlay = document.createElement('div');
     overlay.id = 'share-modal-overlay';
     overlay.className = 'share-modal-overlay';
-    const imgURL = blob ? URL.createObjectURL(blob) : null;
-    const cleanup = () => { if (imgURL) URL.revokeObjectURL(imgURL); overlay.remove(); };
+    const cleanup = () => overlay.remove();
     overlay.onclick = e => { if (e.target === overlay) cleanup(); };
 
     const modal = document.createElement('div');
@@ -3835,13 +3847,21 @@ function openShareModal(text, blob) {
     textEl.textContent = text;
     modal.appendChild(textEl);
 
-    let file = null;
-    if (blob) {
-        file = new File([blob], 'gobblegle.png', { type: 'image/png' });
+    // Use a data URL for display (robust on iOS Safari, unlike blob object URLs from
+    // toBlob), and derive a Blob/File from it for the native share sheet + clipboard.
+    let dataURL = null, blob = null, file = null;
+    if (canvas) {
+        try {
+            dataURL = canvas.toDataURL('image/png');
+            blob = dataURLToBlob(dataURL);
+            file = new File([blob], 'gobblegle.png', { type: 'image/png' });
+        } catch (err) { dataURL = null; blob = null; file = null; }
+    }
+    if (dataURL) {
         const img = document.createElement('img');
         img.className = 'share-modal-img';
         img.alt = 'Your Gobblegle words and score over time';
-        img.src = imgURL;
+        img.src = dataURL;
         modal.appendChild(img);
     }
 
@@ -3871,13 +3891,13 @@ function openShareModal(text, blob) {
         }
     });
 
-    if (blob) {
+    if (dataURL) {
         addBtn('Save image', 'btn btn-outline btn-sm', () => {
             const a = document.createElement('a');
-            a.href = imgURL; a.download = 'gobblegle.png';
+            a.href = dataURL; a.download = 'gobblegle.png';
             document.body.appendChild(a); a.click(); a.remove();
         });
-        if (window.ClipboardItem && navigator.clipboard?.write) {
+        if (blob && window.ClipboardItem && navigator.clipboard?.write) {
             addBtn('Copy image', 'btn btn-outline btn-sm', (b) => {
                 navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
                     .then(() => flash(b, '✓ Copied')).catch(() => {});
