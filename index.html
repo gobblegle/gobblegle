@@ -762,6 +762,10 @@ let isSelecting = false, currentPath = [];
 let timerStarted = false, timerSeconds = 0, timerInterval = null, timerPaused = false;
 let wordEvents = []; // [{word, t}] — solo per-word timeline (t = timerSeconds at find), powers the share chart
 let hintEvents = []; // [{type, t}] — solo per-hint timeline, drawn as distinct x-axis ticks on the share chart
+// Preloaded, same-origin decorative backdrop drawn faintly behind the share chart's plot.
+// Preloading + same-origin keeps the canvas untainted, so toDataURL()/native share still work.
+const shareGraphBgImg = new Image();
+shareGraphBgImg.src = 'graphbg.png';
 
 // Room state
 let roomMode = false, roomId = null, playerId = null;
@@ -3681,38 +3685,72 @@ function renderShareChart() {
     const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
     const F_LABEL = `22px ${FONT}`, F_TITLE = `24px ${FONT}`; // doubled from the original 11/12px
 
-    const padL = 74, padR = 74, padT = 20, padB = 72;
+    const padL = 86, padR = 100, padT = 20, padB = 72;
     const plotW = W - padL - padR, plotH = H - padT - padB;
     const x0 = padL, x1 = W - padR, y0 = H - padB, y1 = padT; // y0 = plot bottom, y1 = plot top
 
     ctx.fillStyle = C.bg;
     ctx.fillRect(0, 0, W, H);
 
+    // Faint decorative backdrop, contained + centered in the plot area (behind everything
+    // else). Skipped silently until the same-origin image has decoded, so rendering stays
+    // synchronous. Only drawn when loaded — never taints the canvas.
+    if (shareGraphBgImg.complete && shareGraphBgImg.naturalWidth > 0) {
+        const iw = shareGraphBgImg.naturalWidth, ih = shareGraphBgImg.naturalHeight;
+        const s = Math.min(plotW / iw, plotH / ih);   // contain: fit fully, as big as possible
+        const dw = iw * s, dh = ih * s;
+        ctx.save();
+        ctx.globalAlpha = 0.25;
+        ctx.drawImage(shareGraphBgImg, x0 + (plotW - dw) / 2, y1 + (plotH - dh) / 2, dw, dh);
+        ctx.restore();
+    }
+
     // X-axis spans the ACTUAL elapsed time (not rounded); ticks still fall on 5-min marks.
     const xMax = clock;
-    const niceCeil = (v) => {
-        if (v <= 0) return 1;
-        const p = Math.pow(10, Math.floor(Math.log10(v)));
-        const n = v / p;
-        return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p;
-    };
-    const wordMax  = niceCeil(events.length);
-    const scoreMax = niceCeil(events.reduce((s, e) => s + wordScore(e.word.length), 0));
+    // FIXED (non-sliding) Y scales: the left axis always tops out at the total findable
+    // words on the board, the right axis at the max possible score — so every card uses the
+    // same reference and the player's lines show how far up they climbed.
+    const wordMax  = Math.max(1, validWords.size);
+    const scoreMax = Math.max(1, totalScore(validWords));
 
     const X  = (t) => x0 + (t / xMax) * plotW;
     const Yw = (c) => y0 - (c / wordMax)  * plotH;   // word count → left scale
     const Ys = (s) => y0 - (s / scoreMax) * plotH;   // score → right scale
 
-    // Horizontal gridlines with dual Y labels: words (orange) left, score (dark) right.
-    const ROWS = 5;
+    // Distinct integer tick values from 0 up to and including `max`, using a 1/2/5×10ⁿ step
+    // aimed at ~`target` intervals. The exact max is always the top tick (its final gap may
+    // be shorter); a near-duplicate second-from-top tick is dropped. Because each axis gets
+    // its own ticks, both stay clean integers with no repeats — no shared-grid rounding that
+    // produced the old doubled 0,0,1,1,2,2 labels.
+    const intTicks = (max, target) => {
+        const m = Math.max(1, Math.round(max));
+        if (m <= target) return Array.from({ length: m + 1 }, (_, i) => i); // 0,1,…,m
+        const raw = m / target;
+        const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+        const step = ([1, 2, 5, 10].find(f => f * pow >= raw) || 10) * pow;
+        const ticks = [];
+        for (let v = 0; v < m; v += step) ticks.push(v);
+        if (m - ticks[ticks.length - 1] < step * 0.5) ticks.pop(); // don't crowd the top
+        ticks.push(m);
+        return ticks;
+    };
+
     ctx.lineWidth = 1.5;
     ctx.font = F_LABEL;
-    for (let i = 0; i <= ROWS; i++) {
-        const y = y0 - (i / ROWS) * plotH;
+    // Left (words) axis: full horizontal gridlines + orange integer labels.
+    for (const w of intTicks(wordMax, 5)) {
+        const y = Yw(w);
         ctx.strokeStyle = C.grid;
         ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
-        ctx.fillStyle = C.word;  ctx.textAlign = 'right'; ctx.fillText(String(Math.round((i / ROWS) * wordMax)),  x0 - 10, y);
-        ctx.fillStyle = C.score; ctx.textAlign = 'left';  ctx.fillText(String(Math.round((i / ROWS) * scoreMax)), x1 + 10, y);
+        ctx.fillStyle = C.word; ctx.textAlign = 'right'; ctx.fillText(String(w), x0 - 12, y);
+    }
+    // Right (score) axis: short right-edge tick marks + dark integer labels (its own scale,
+    // so word and score ticks never have to share a row and force fractions/duplicates).
+    for (const s of intTicks(scoreMax, 5)) {
+        const y = Ys(s);
+        ctx.strokeStyle = C.grid;
+        ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x1 + 6, y); ctx.stroke();
+        ctx.fillStyle = C.score; ctx.textAlign = 'left'; ctx.fillText(String(s), x1 + 12, y);
     }
 
     // Ticks at every 5-minute mark that falls within the elapsed time; thin the labels
@@ -3727,9 +3765,11 @@ function renderShareChart() {
         if (i % labelEvery === 0) { ctx.fillStyle = C.muted; ctx.fillText(String(i * 5), x, y0 + 26); }
     }
 
-    // Left + bottom axis frame.
+    // Axis frame: left, bottom, and right edges (the right edge anchors the score ticks).
     ctx.strokeStyle = C.grid; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(x0, y1); ctx.lineTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x0, y1); ctx.lineTo(x0, y0); ctx.lineTo(x1, y0); ctx.lineTo(x1, y1);
+    ctx.stroke();
 
     // Cumulative step lines, clipped to the plot, each ending flat at the current clock.
     ctx.save();
@@ -3782,10 +3822,15 @@ function renderShareChart() {
     ctx.font = F_TITLE;
     ctx.fillStyle = C.muted; ctx.textAlign = 'center';
     ctx.fillText('Time (min)', x0 + plotW / 2, H - 16);
-    ctx.save(); ctx.translate(20, y1 + plotH / 2); ctx.rotate(-Math.PI / 2);
+    ctx.save(); ctx.translate(16, y1 + plotH / 2); ctx.rotate(-Math.PI / 2);
     ctx.fillStyle = C.word;  ctx.fillText('Words', 0, 0); ctx.restore();
-    ctx.save(); ctx.translate(W - 20, y1 + plotH / 2); ctx.rotate(Math.PI / 2);
+    // "Score" sits hard against the right edge, clear of its (now wider) tick labels.
+    ctx.save(); ctx.translate(W - 16, y1 + plotH / 2); ctx.rotate(Math.PI / 2);
     ctx.fillStyle = C.score; ctx.fillText('Score', 0, 0); ctx.restore();
+
+    // Total elapsed time, right-aligned to the plot's right edge (bottom-right corner).
+    ctx.font = F_LABEL; ctx.fillStyle = C.muted; ctx.textAlign = 'right';
+    ctx.fillText(formatTime(timerSeconds), x1, H - 16);
 
     return cv;
 }
