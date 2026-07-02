@@ -367,6 +367,26 @@
         .player-modal-title { font-size: 1rem; font-weight: 800; }
         .player-modal-body { overflow-y: auto; flex: 1; }
 
+        /* ── Share preview modal ── */
+        .share-modal-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+            z-index: 300; display: flex; align-items: center; justify-content: center; padding: 20px;
+        }
+        .share-modal {
+            background: var(--surface); border-radius: 16px; padding: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.25); width: 100%; max-width: 420px;
+            max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;
+        }
+        .share-modal-text {
+            white-space: pre-wrap; text-align: center; font-size: 0.9rem;
+            line-height: 1.5; color: var(--text);
+        }
+        .share-modal-img {
+            width: 100%; height: auto; display: block;
+            border: 1px solid var(--border); border-radius: 10px;
+        }
+        .share-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+
         /* ── Pre-game start countdown ── */
         .start-countdown-overlay {
             position: fixed; inset: 0; background: rgba(0,0,0,0.45);
@@ -740,6 +760,8 @@ let currentBoardDate = null; // YYYY-MM-DD if showing a daily board, null otherw
 let answersRevealed = false;
 let isSelecting = false, currentPath = [];
 let timerStarted = false, timerSeconds = 0, timerInterval = null, timerPaused = false;
+let wordEvents = []; // [{word, t}] — solo per-word timeline (t = timerSeconds at find), powers the share chart
+let hintEvents = []; // [{type, t}] — solo per-hint timeline, drawn as distinct x-axis ticks on the share chart
 
 // Room state
 let roomMode = false, roomId = null, playerId = null;
@@ -1372,6 +1394,8 @@ function saveProgress() {
     const h = getBoardHash();
     const won = validWords.size > 0 && foundWords.size >= validWords.size;
     localStorage.setItem(`G2_found_${h}`, JSON.stringify([...foundWords]));
+    localStorage.setItem(`G2_events_${h}`, JSON.stringify(wordEvents));
+    localStorage.setItem(`G2_hintevents_${h}`, JSON.stringify(hintEvents));
     localStorage.setItem(`G2_bonus_found_${h}`, JSON.stringify([...foundBonusWords]));
     localStorage.setItem(`G2_timer_${h}`, JSON.stringify({ s: timerSeconds, started: timerStarted, paused: timerPaused, won }));
     if (answersRevealed) localStorage.setItem(`G2_answers_${h}`, '1');
@@ -1390,6 +1414,10 @@ function safeLoadJSON(key, fallback) {
 function loadProgress() {
     const h = getBoardHash();
     foundWords = new Set(safeLoadJSON(`G2_found_${h}`, []));
+    wordEvents = safeLoadJSON(`G2_events_${h}`, []);
+    if (!Array.isArray(wordEvents)) wordEvents = [];
+    hintEvents = safeLoadJSON(`G2_hintevents_${h}`, []);
+    if (!Array.isArray(hintEvents)) hintEvents = [];
     foundBonusWords = new Set(safeLoadJSON(`G2_bonus_found_${h}`, []));
     answersRevealed = localStorage.getItem(`G2_answers_${h}`) === '1';
     hintsUsed = new Set(safeLoadJSON(`G2_hints_used_${h}`, []));
@@ -1577,6 +1605,8 @@ async function loadDailyBoard(date) {
         answersRevealed = false;
         hintsUsed = new Set();
         foundWords = new Set();
+        wordEvents = [];
+        hintEvents = [];
         foundBonusWords = new Set();
         loadProgress();
         calculateValidWords();
@@ -1915,6 +1945,7 @@ function endSelection() {
         if (validWords.has(word)) {
             if (!myWords.has(word)) {
                 myWords.add(word);
+                if (!roomMode) wordEvents.push({ word, t: timerSeconds });
                 roomMode ? updateRoomScoreUI() : (saveProgress(), updateScoreUI());
                 updateTileHints();
                 if (!roomMode && typeof tutProgressCheck === 'function') tutProgressCheck();
@@ -2395,7 +2426,7 @@ function renderHintScreen(popup) {
 function applyListHint(kind) {
     if (!hintsUsed.has(kind)) {
         hintsUsed.add(kind);
-        if (!roomMode) saveProgress();
+        if (!roomMode) { hintEvents.push({ type: kind, t: timerSeconds }); saveProgress(); }
     }
     hintScreen = null;
     renderPopup();
@@ -2449,6 +2480,8 @@ function revealHintWord(len) {
     foundWords.add(word);
     hintsUsed.add('reveal');
     if (!roomMode) startTimer(); // make sure the timer is running like a normal find
+    if (!roomMode) wordEvents.push({ word, t: timerSeconds });
+    if (!roomMode) hintEvents.push({ type: 'reveal', t: timerSeconds });
     saveProgress();
     updateScoreUI();
     updateTileHints();
@@ -2618,6 +2651,10 @@ function calculateValidWords() {
 function resetProgress() {
     const h = getBoardHash();
     foundWords.clear();
+    wordEvents = [];
+    hintEvents = [];
+    localStorage.removeItem(`G2_events_${h}`);
+    localStorage.removeItem(`G2_hintevents_${h}`);
     foundBonusWords.clear();
     resetTimer();
     hintsUsed = new Set();
@@ -3604,7 +3641,156 @@ async function leaveRoom() {
     renderBoard();
 }
 
-function shareGame() {
+// Render the solo game's word-count + score timeline to a PNG for the share card.
+// Words use the left axis in the theme's primary orange; score uses the right axis
+// in the theme's text colour, so the image matches light/dark. Both are cumulative
+// step lines from (0,0) that run flat out to the current clock. Resolves to a Blob,
+// or null when there isn't enough timed data (e.g. games from before timing existed).
+function renderShareChart() {
+    if (wordEvents.length < 2) return Promise.resolve(null);
+
+    const cs = getComputedStyle(document.documentElement);
+    const col = (name, fallback) => (cs.getPropertyValue(name).trim() || fallback);
+    const C = {
+        word:  col('--primary', '#c2410c'),
+        score: col('--text', '#1c0a00'),
+        grid:  col('--border', '#e8d5c4'),
+        muted: col('--text-muted', '#78614f'),
+        bg:    col('--surface', '#ffffff'),
+        hint:  '#8b5cf6', // fixed violet accent — distinct from words/score/grid, legible on light + dark
+    };
+
+    const W = 600, H = 360, dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const cv = document.createElement('canvas');       // offscreen — never attached to the DOM
+    cv.width = W * dpr; cv.height = H * dpr;
+    const ctx = cv.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.textBaseline = 'middle';
+    const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+
+    const padL = 52, padR = 56, padT = 40, padB = 46;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const x0 = padL, x1 = W - padR, y0 = H - padB, y1 = padT; // y0 = plot bottom, y1 = plot top
+
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // Round the x-axis up to the next whole 5 minutes; always show at least one interval.
+    const xMax = Math.max(300, Math.ceil(timerSeconds / 300) * 300);
+    const niceCeil = (v) => {
+        if (v <= 0) return 1;
+        const p = Math.pow(10, Math.floor(Math.log10(v)));
+        const n = v / p;
+        return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p;
+    };
+    const wordMax  = niceCeil(wordEvents.length);
+    const scoreMax = niceCeil(wordEvents.reduce((s, e) => s + wordScore(e.word.length), 0));
+
+    const X  = (t) => x0 + (t / xMax) * plotW;
+    const Yw = (c) => y0 - (c / wordMax)  * plotH;   // word count → left scale
+    const Ys = (s) => y0 - (s / scoreMax) * plotH;   // score → right scale
+
+    // Horizontal gridlines with dual Y labels: words (orange) left, score (dark) right.
+    const ROWS = 5;
+    ctx.lineWidth = 1;
+    ctx.font = `11px ${FONT}`;
+    for (let i = 0; i <= ROWS; i++) {
+        const y = y0 - (i / ROWS) * plotH;
+        ctx.strokeStyle = C.grid;
+        ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+        ctx.fillStyle = C.word;  ctx.textAlign = 'right'; ctx.fillText(String(Math.round((i / ROWS) * wordMax)),  x0 - 6, y);
+        ctx.fillStyle = C.score; ctx.textAlign = 'left';  ctx.fillText(String(Math.round((i / ROWS) * scoreMax)), x1 + 6, y);
+    }
+
+    // X ticks at every 5-minute mark; thin only the labels when the game runs long.
+    const intervals = xMax / 300;
+    const labelEvery = Math.ceil(intervals / 8);
+    ctx.textAlign = 'center';
+    for (let i = 0; i <= intervals; i++) {
+        const x = X(i * 300);
+        ctx.strokeStyle = C.grid;
+        ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y0 + 4); ctx.stroke();
+        if (i % labelEvery === 0) { ctx.fillStyle = C.muted; ctx.fillText(String(i * 5), x, y0 + 18); }
+    }
+
+    // Left + bottom axis frame.
+    ctx.strokeStyle = C.grid;
+    ctx.beginPath(); ctx.moveTo(x0, y1); ctx.lineTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
+
+    // Cumulative step lines, clipped to the plot, each ending flat at the current clock.
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x0, y1, plotW, plotH); ctx.clip();
+    const drawStep = (yFn, stepOf, color) => {
+        ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        let cum = 0;
+        ctx.moveTo(X(0), yFn(0));
+        for (const e of wordEvents) {
+            ctx.lineTo(X(e.t), yFn(cum));   // across to the event time
+            cum += stepOf(e);
+            ctx.lineTo(X(e.t), yFn(cum));   // step up
+        }
+        ctx.lineTo(X(timerSeconds), yFn(cum)); // flat out to "now"
+        ctx.stroke();
+    };
+    drawStep(Yw, () => 1, C.word);
+    drawStep(Ys, (e) => wordScore(e.word.length), C.score);
+    ctx.restore();
+
+    // Hint markers — a visibly different tick at each moment a hint was used: a faint
+    // dashed guide up through the plot, tipped with a solid violet triangle sitting on
+    // the time axis (distinct in colour AND shape from the plain grey 5-minute ticks).
+    const drawnHintX = [];
+    for (const e of hintEvents) {
+        if (!Number.isFinite(e.t)) continue;
+        const x = X(Math.max(0, Math.min(e.t, xMax)));
+        if (drawnHintX.some(px => Math.abs(px - x) < 9)) continue; // collapse near-coincident hints into one marker
+        drawnHintX.push(x);
+        ctx.strokeStyle = C.hint; ctx.globalAlpha = 0.4; ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
+        ctx.setLineDash([]); ctx.globalAlpha = 1;
+        ctx.fillStyle = C.hint;
+        ctx.beginPath();
+        ctx.moveTo(x, y0);            // tip on the axis
+        ctx.lineTo(x - 4.5, y0 + 8);  // base-left, just below the axis
+        ctx.lineTo(x + 4.5, y0 + 8);  // base-right, just below the axis
+        ctx.closePath(); ctx.fill();
+    }
+
+    // Legend (top-left).
+    ctx.font = `12px ${FONT}`;
+    ctx.textAlign = 'left';
+    const legY = padT / 2;
+    let lx = x0;
+    const swatch = (color, label) => {
+        ctx.fillStyle = color; ctx.fillRect(lx, legY - 5, 14, 10);
+        ctx.fillStyle = C.muted; ctx.fillText(label, lx + 20, legY);
+        lx += 20 + ctx.measureText(label).width + 22;
+    };
+    swatch(C.word, 'Words');
+    swatch(C.score, 'Score');
+    if (hintEvents.length) {
+        const ly = legY;
+        ctx.strokeStyle = C.hint; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx + 14, ly); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = C.hint;
+        ctx.beginPath(); ctx.moveTo(lx + 7, ly - 5); ctx.lineTo(lx + 3, ly + 3); ctx.lineTo(lx + 11, ly + 3); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = C.muted; ctx.textAlign = 'left'; ctx.fillText('Hint', lx + 20, ly);
+    }
+
+    // Axis titles.
+    ctx.fillStyle = C.muted; ctx.textAlign = 'center';
+    ctx.fillText('Time (min)', x0 + plotW / 2, H - 8);
+    ctx.save(); ctx.translate(12, y1 + plotH / 2); ctx.rotate(-Math.PI / 2);
+    ctx.fillStyle = C.word;  ctx.fillText('Words', 0, 0); ctx.restore();
+    ctx.save(); ctx.translate(W - 12, y1 + plotH / 2); ctx.rotate(Math.PI / 2);
+    ctx.fillStyle = C.score; ctx.fillText('Score', 0, 0); ctx.restore();
+
+    return new Promise((resolve) => cv.toBlob((b) => resolve(b), 'image/png'));
+}
+
+async function shareGame() {
     if (roomMode) return;
     // Report exactly what the on-screen timer shows (same source the display uses).
     const timeStr = formatTime(timerSeconds);
@@ -3621,16 +3807,94 @@ function shareGame() {
     const n = hintsUsed.size;
     const hintLine = `${hintWords[n] ?? n} hint${n === 1 ? '' : 's'} used`;
     const text = `🦃 I played Gobblegle! 🦃\n${dateStr}\nFound: ${foundWords.size}/${validWords.size}\nScore: ${score}\n${timeStr}\n${hintLine}\nhttps://gobblegle.com`;
-    if (navigator.share) {
-        navigator.share({ title: 'Gobblegle', text }).catch(() => {});
-    } else {
-        navigator.clipboard.writeText(text).then(() => {
-            const btn = document.getElementById('share-btn');
-            const prev = btn.textContent;
-            btn.textContent = '✓';
-            setTimeout(() => { btn.textContent = prev; }, 2000);
-        }).catch(() => { prompt('Copy this:', text); });
+    // Preview the shareable card: the text summary on top, the words + score chart
+    // below (null when there isn't enough timed data → text-only card).
+    const blob = await renderShareChart();
+    openShareModal(text, blob);
+}
+
+// Preview modal for the share card. Shows the text summary on top and the chart
+// (if any) below, with Share / Save / Copy actions. Sharing sends image + text
+// together where the platform supports files, else falls back to text.
+function openShareModal(text, blob) {
+    document.getElementById('share-modal-overlay')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'share-modal-overlay';
+    overlay.className = 'share-modal-overlay';
+    const imgURL = blob ? URL.createObjectURL(blob) : null;
+    const cleanup = () => { if (imgURL) URL.revokeObjectURL(imgURL); overlay.remove(); };
+    overlay.onclick = e => { if (e.target === overlay) cleanup(); };
+
+    const modal = document.createElement('div');
+    modal.className = 'share-modal';
+    modal.onclick = e => e.stopPropagation();
+
+    const textEl = document.createElement('div');
+    textEl.className = 'share-modal-text';
+    textEl.textContent = text;
+    modal.appendChild(textEl);
+
+    let file = null;
+    if (blob) {
+        file = new File([blob], 'gobblegle.png', { type: 'image/png' });
+        const img = document.createElement('img');
+        img.className = 'share-modal-img';
+        img.alt = 'Your Gobblegle words and score over time';
+        img.src = imgURL;
+        modal.appendChild(img);
     }
+
+    const actions = document.createElement('div');
+    actions.className = 'share-modal-actions';
+    const flash = (btn, label) => {
+        const prev = btn.textContent; btn.textContent = label;
+        setTimeout(() => { btn.textContent = prev; }, 1600);
+    };
+    const addBtn = (label, cls, onClick) => {
+        const b = document.createElement('button');
+        b.className = cls; b.textContent = label; b.onclick = () => onClick(b);
+        actions.appendChild(b); return b;
+    };
+
+    const canShareFiles = file && navigator.canShare && navigator.canShare({ files: [file] });
+
+    // Share → native sheet (image + text together when supported), else text only.
+    addBtn('Share', 'btn btn-sm', (b) => {
+        if (canShareFiles) {
+            navigator.share({ files: [file], text, title: 'Gobblegle' }).catch(() => {});
+        } else if (navigator.share) {
+            navigator.share({ title: 'Gobblegle', text }).catch(() => {});
+        } else {
+            navigator.clipboard?.writeText(text)
+                .then(() => flash(b, '✓ Copied')).catch(() => prompt('Copy this:', text));
+        }
+    });
+
+    if (blob) {
+        addBtn('Save image', 'btn btn-outline btn-sm', () => {
+            const a = document.createElement('a');
+            a.href = imgURL; a.download = 'gobblegle.png';
+            document.body.appendChild(a); a.click(); a.remove();
+        });
+        if (window.ClipboardItem && navigator.clipboard?.write) {
+            addBtn('Copy image', 'btn btn-outline btn-sm', (b) => {
+                navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+                    .then(() => flash(b, '✓ Copied')).catch(() => {});
+            });
+        }
+    }
+
+    addBtn('Copy text', 'btn btn-outline btn-sm', (b) => {
+        navigator.clipboard?.writeText(text)
+            .then(() => flash(b, '✓ Copied')).catch(() => prompt('Copy this:', text));
+    });
+
+    addBtn('Close', 'btn btn-outline btn-sm', cleanup);
+
+    modal.appendChild(actions);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
 }
 
 function shareRoom() {
