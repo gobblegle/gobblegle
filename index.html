@@ -3659,21 +3659,12 @@ function renderShareChart() {
 
     const cs = getComputedStyle(document.documentElement);
     const col = (name, fallback) => (cs.getPropertyValue(name).trim() || fallback);
-    // Mix a colour ~amt of the way toward mid-grey (softens the near-black score line).
-    const greyer = (c, amt) => {
-        const h = String(c).replace('#', '').trim();
-        const f = h.length === 3 ? h.split('').map(ch => ch + ch).join('') : h;
-        if (!/^[0-9a-fA-F]{6}$/.test(f)) return c;
-        const mix = v => Math.round(v + (128 - v) * amt);
-        return `rgb(${mix(parseInt(f.slice(0,2),16))}, ${mix(parseInt(f.slice(2,4),16))}, ${mix(parseInt(f.slice(4,6),16))})`;
-    };
     const C = {
         word:  col('--primary', '#c2410c'),
-        score: greyer(col('--text', '#1c0a00'), 0.25), // 25% greyer — dark, but not pure black
         grid:  col('--border', '#e8d5c4'),
         muted: col('--text-muted', '#78614f'),
         bg:    col('--surface', '#ffffff'),
-        hint:  '#8b5cf6', // fixed violet accent — distinct from words/score/grid, legible on light + dark
+        hint:  '#8b5cf6', // fixed violet accent — distinct from words/grid, legible on light + dark
     };
 
     const W = 680, H = 400, dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -3685,7 +3676,7 @@ function renderShareChart() {
     const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
     const F_LABEL = `22px ${FONT}`, F_TITLE = `24px ${FONT}`; // doubled from the original 11/12px
 
-    const padL = 86, padR = 100, padT = 20, padB = 72;
+    const padL = 86, padR = 40, padT = 20, padB = 72;
     const plotW = W - padL - padR, plotH = H - padT - padB;
     const x0 = padL, x1 = W - padR, y0 = H - padB, y1 = padT; // y0 = plot bottom, y1 = plot top
 
@@ -3707,21 +3698,18 @@ function renderShareChart() {
 
     // X-axis spans the ACTUAL elapsed time (not rounded); ticks still fall on 5-min marks.
     const xMax = clock;
-    // FIXED (non-sliding) Y scales: the left axis always tops out at the total findable
-    // words on the board, the right axis at the max possible score — so every card uses the
-    // same reference and the player's lines show how far up they climbed.
+    // FIXED (non-sliding) Y scale: the left axis always tops out at the total findable words
+    // on the board — so every card uses the same reference and the word line shows how far up
+    // the player climbed.
     const wordMax  = Math.max(1, validWords.size);
-    const scoreMax = Math.max(1, totalScore(validWords));
 
     const X  = (t) => x0 + (t / xMax) * plotW;
-    const Yw = (c) => y0 - (c / wordMax)  * plotH;   // word count → left scale
-    const Ys = (s) => y0 - (s / scoreMax) * plotH;   // score → right scale
+    const Yw = (c) => y0 - (c / wordMax) * plotH;   // word count → left scale
 
     // Distinct integer tick values from 0 up to and including `max`, using a 1/2/5×10ⁿ step
     // aimed at ~`target` intervals. The exact max is always the top tick (its final gap may
-    // be shorter); a near-duplicate second-from-top tick is dropped. Because each axis gets
-    // its own ticks, both stay clean integers with no repeats — no shared-grid rounding that
-    // produced the old doubled 0,0,1,1,2,2 labels.
+    // be shorter); a near-duplicate second-from-top tick is dropped, so labels stay clean
+    // integers with no repeats (no rounding that produced the old doubled 0,0,1,1,2,2 labels).
     const intTicks = (max, target) => {
         const m = Math.max(1, Math.round(max));
         if (m <= target) return Array.from({ length: m + 1 }, (_, i) => i); // 0,1,…,m
@@ -3737,20 +3725,12 @@ function renderShareChart() {
 
     ctx.lineWidth = 1.5;
     ctx.font = F_LABEL;
-    // Left (words) axis: full horizontal gridlines + orange integer labels.
+    // Words axis: full horizontal gridlines + orange integer labels (left side only).
     for (const w of intTicks(wordMax, 5)) {
         const y = Yw(w);
         ctx.strokeStyle = C.grid;
         ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
         ctx.fillStyle = C.word; ctx.textAlign = 'right'; ctx.fillText(String(w), x0 - 12, y);
-    }
-    // Right (score) axis: short right-edge tick marks + dark integer labels (its own scale,
-    // so word and score ticks never have to share a row and force fractions/duplicates).
-    for (const s of intTicks(scoreMax, 5)) {
-        const y = Ys(s);
-        ctx.strokeStyle = C.grid;
-        ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x1 + 6, y); ctx.stroke();
-        ctx.fillStyle = C.score; ctx.textAlign = 'left'; ctx.fillText(String(s), x1 + 12, y);
     }
 
     // Ticks at every 5-minute mark that falls within the elapsed time; thin the labels
@@ -3765,11 +3745,9 @@ function renderShareChart() {
         if (i % labelEvery === 0) { ctx.fillStyle = C.muted; ctx.fillText(String(i * 5), x, y0 + 26); }
     }
 
-    // Axis frame: left, bottom, and right edges (the right edge anchors the score ticks).
+    // Left + bottom axis frame.
     ctx.strokeStyle = C.grid; ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(x0, y1); ctx.lineTo(x0, y0); ctx.lineTo(x1, y0); ctx.lineTo(x1, y1);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x0, y1); ctx.lineTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
 
     // Cumulative step lines, clipped to the plot, each ending flat at the current clock.
     ctx.save();
@@ -3789,8 +3767,7 @@ function renderShareChart() {
         ctx.lineTo(clampX(clock), yFn(cum)); // flat out to "now"
         ctx.stroke();
     };
-    drawStep(Ys, (e) => wordScore(e.word.length), C.score); // score underneath
-    drawStep(Yw, () => 1, C.word);                          // words on top
+    drawStep(Yw, () => 1, C.word); // cumulative words found over time
     ctx.restore();
 
     // Hint markers — a violet triangle on the time axis at each hint, with a faint dashed
@@ -3818,15 +3795,12 @@ function renderShareChart() {
         ctx.closePath(); ctx.fill();
     }
 
-    // Axis titles (no top legend — the coloured axis labels identify each series).
+    // Axis titles.
     ctx.font = F_TITLE;
     ctx.fillStyle = C.muted; ctx.textAlign = 'center';
     ctx.fillText('Time (min)', x0 + plotW / 2, H - 16);
     ctx.save(); ctx.translate(16, y1 + plotH / 2); ctx.rotate(-Math.PI / 2);
     ctx.fillStyle = C.word;  ctx.fillText('Words', 0, 0); ctx.restore();
-    // "Score" sits hard against the right edge, clear of its (now wider) tick labels.
-    ctx.save(); ctx.translate(W - 16, y1 + plotH / 2); ctx.rotate(Math.PI / 2);
-    ctx.fillStyle = C.score; ctx.fillText('Score', 0, 0); ctx.restore();
 
     // Total elapsed time, right-aligned to the plot's right edge (bottom-right corner).
     ctx.font = F_LABEL; ctx.fillStyle = C.muted; ctx.textAlign = 'right';
