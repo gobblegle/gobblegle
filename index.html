@@ -3645,16 +3645,15 @@ async function leaveRoom() {
     renderBoard();
 }
 
-// Render the solo game's word-count + score timeline to a <canvas> for the share card.
-// Words use the left axis in the theme's primary orange; score uses the right axis in a
-// slightly greyed theme text colour, so the image matches light/dark. Both are cumulative
-// step lines from (0,0) that run flat out to the current clock; the WORD line is drawn on
-// top. Returns the canvas, or null when there isn't enough timed data (older games).
+// Render the solo game's cumulative words-found timeline to a <canvas> for the share card.
+// A single orange step line on the left (Words) axis runs from (0,0) flat out to the current
+// clock, over the theme surface so it matches light/dark. Always returns a canvas — even a
+// zero-word game draws a flat line, so the graph shows up every time.
 function renderShareChart() {
     // Work off a sanitized copy so a corrupted/hand-edited localStorage record can't
-    // throw or produce NaN geometry (normal play never creates a bad entry).
+    // throw or produce NaN geometry (normal play never creates a bad entry). No minimum:
+    // 0 or 1 words still render (a flat / single-step line) so the graph is always shown.
     const events = wordEvents.filter(e => e && typeof e.word === 'string' && Number.isFinite(e.t));
-    if (events.length < 2) return null;
     const clock = Math.max(1, Number(timerSeconds) || 0); // elapsed seconds, coerced & clamped
 
     const cs = getComputedStyle(document.documentElement);
