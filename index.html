@@ -2796,6 +2796,15 @@ function setupPresence() {
 function handleRoomUpdate(data) {
     if (!data) { alert('This room has been closed.'); leaveRoom(); return; }
     lastRoomData = data;
+    // Drop a STALE snapshot that regresses below the round we've already locally
+    // entered. Firebase can deliver an in-flight server echo of the pre-start 'lobby'
+    // state (or a previous round) right AFTER our optimistic/confirmed transition to
+    // 'playing' — especially when the host's clock lags, so the countdown fires
+    // instantly and the transition races presence writes. Without this guard that
+    // echo hits the lobby branch below, resets roomPlayingInitialized, and re-runs
+    // renderRoomPlaying → a phantom "second countdown" + a second, uncleared game
+    // timer (two intervals flashing timer-display) + corrupted end-of-round state.
+    if (roomPlayingInitialized && (data.currentRound ?? -1) < roomCurrentRound) return;
     if (data.state === 'lobby') {
         roomPlayingInitialized = false;
         scoreBoardShown = false;
@@ -2890,8 +2899,21 @@ function checkAutoStart(data) {
     // and clear it the instant that stops being true (someone un-readies / steps away).
     if (isHost) {
         if (allReady && cd == null) {
-            // Freeze the participant set atomically with the clock.
-            roomRef.update({ countdownStartAt: Date.now(), countdownPlayers: counted.map(([pid]) => pid) });
+            // Freeze the participant set atomically with the clock — AND write it exactly
+            // ONCE. A plain update() here is a non-atomic read-modify-write: because this
+            // client doesn't see its own write until the round-trip completes, an
+            // interleaved room event (a presence heartbeat) that still shows
+            // countdownStartAt==null re-enters this branch and stamps a SECOND, later
+            // timestamp — restarting the "starting in 5…" dialog from the top (the
+            // reported "double countdown"). A transaction that no-ops when the clock is
+            // already set makes it idempotent, so only the first stamp wins.
+            const pids = counted.map(([pid]) => pid);
+            roomRef.transaction(room => {
+                if (!room || (room.state !== 'lobby' && room.state !== 'finished') || room.countdownStartAt != null) return; // already stamped, or not in a startable state — abort. NOTE 'finished' is startable: a rematch (round 2+) arms from the post-scoreboard 'finished' state, not 'lobby'.
+                room.countdownStartAt = Date.now();
+                room.countdownPlayers = pids;
+                return room;
+            });
             return; // the resulting room update re-enters here and shows the dialog
         }
         if (!allReady && cd != null) {
@@ -2905,12 +2927,13 @@ function checkAutoStart(data) {
 // Every client runs the local ticker; the host alone flips the room to 'playing' at zero.
 function syncStartCountdown(data) {
     startCountdownData = data;
-    // No countdown running. Clear the one-shot latch so the NEXT countdown can fire.
-    // This is the only safe place to reset it: the snapshot itself reports null, and
-    // Firebase never re-delivers the old non-null timestamp after a null for this ref,
-    // so a stale 'lobby' echo can't slip back in and re-arm. (Resetting in
-    // hideStartCountdown would be unsafe — that runs on the state→'playing' path too.)
-    if (data.countdownStartAt == null) { startCountdownFiredFor = null; hideStartCountdown(); return; }
+    // No countdown running — just hide the dialog. We deliberately do NOT reset the
+    // one-shot latch here. startCountdownFiredFor holds the timestamp we already fired
+    // for; every fresh countdown is stamped with a new Date.now(), so a genuinely new
+    // one still arms (its timestamp differs), while a stale null/'lobby' echo of the
+    // countdown we already started can never re-arm it. Resetting on a (possibly stale)
+    // null echo re-opened the double-countdown under out-of-order snapshot delivery.
+    if (data.countdownStartAt == null) { hideStartCountdown(); return; }
     // Only joined, non-skipping players see (and can cancel) the "Game starting…"
     // dialog. A skipping player is sitting this one out; a not-yet-joined browser
     // isn't a participant — neither should be able to abort the group's start.
@@ -3348,6 +3371,10 @@ function renderRoomPlaying(data) {
 }
 
 function startRoomCountdown(endAt) {
+    // Never leave a previous round-timer running: a second startRoomCountdown without
+    // this clear would spawn a rival setInterval, and the two would fight over
+    // timer-display (the visible "flashing") and each fire their own endRoomGame.
+    if (roomCountdownInterval) { clearInterval(roomCountdownInterval); roomCountdownInterval = null; }
     const el = document.getElementById('timer-display');
     function tick() {
         const rem = Math.max(0, endAt - Date.now());
