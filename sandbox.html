@@ -611,6 +611,8 @@
             </div>
         </div>
 
+        <button class="btn btn-full" id="ready-btn" onclick="toggleReady()" disabled>I'm Ready</button>
+
         <div class="card">
             <div class="card-title">Game Settings</div>
             <div class="setting-row">
@@ -644,8 +646,6 @@
                 </div>
             </div>
         </div>
-
-        <button class="btn btn-full" id="ready-btn" onclick="toggleReady()" disabled>I'm Ready</button>
     </div>
 
     <!-- Scoreboard -->
@@ -760,6 +760,20 @@ let lastRoomData = null;              // most recent room snapshot (for presence
 let lobbyGameTimerInterval = null;     // ticker for the "game in progress" clock shown to waiters
 let connectedListenerSet = false;      // .info/connected presence listener registered once
 const ROOM_START_COUNTDOWN_MS = 5000;  // shared lobby countdown before a game begins
+
+// ── Shared clock ───────────────────────────────────────────────────────────
+// Every cross-device timestamp (countdownStartAt, startedAt, joined) is stamped by ONE
+// device and then compared against Date.now() on EVERY OTHER device. Phone clocks drift
+// by seconds-to-minutes, so those comparisons are wrong by exactly that drift, which
+// breaks the shared countdown and — worse — the round-expiry checks: a player whose
+// clock leads the round-starter's by more than the round length sees the round as
+// already-over the instant it begins, never renders the board, never submits a score,
+// and is dumped to the lobby instead of the scoreboard at the end.
+// Firebase hands every client the correction: .info/serverTimeOffset = serverTime - Date.now().
+// serverNow() is therefore the SAME instant on every device — use it for every timestamp
+// that crosses a device boundary. (Solo-mode timers still use plain Date.now().)
+let serverTimeOffset = 0;
+function serverNow() { return Date.now() + serverTimeOffset; }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function mulberry32(seed) {
@@ -2699,6 +2713,14 @@ async function initRoomMode(rid) {
     playerId  = getPlayerId();
     roomRef   = db.ref(`rooms/${rid}`);
 
+    // Sync the shared clock BEFORE the room listener starts, so the very first
+    // countdown/round-expiry comparison already uses server time, not this phone's.
+    try {
+        const off = await db.ref('.info/serverTimeOffset').once('value');
+        serverTimeOffset = off.val() || 0;
+    } catch {}
+    db.ref('.info/serverTimeOffset').on('value', s => { serverTimeOffset = s.val() || 0; });
+
     const snap = await roomRef.once('value');
     if (!snap.exists()) {
         alert('Room not found.');
@@ -2786,7 +2808,7 @@ function handleRoomUpdate(data) {
             const onlinePlayers = Object.entries(data.players || {}).filter(([,p]) => p.online !== false);
             const aloneOnline   = onlinePlayers.every(([pid]) => pid === playerId);
             const durationMs     = (data.settings?.minutes || 3) * 60000;
-            const roundExpired   = data.startedAt && (data.startedAt + durationMs) < Date.now();
+            const roundExpired   = data.startedAt && (data.startedAt + durationMs) < serverNow();
             if (aloneOnline && roundExpired) {
                 roomRef.update({ state: 'lobby' });
                 return;
@@ -2869,7 +2891,7 @@ function checkAutoStart(data) {
             const pids = counted.map(([pid]) => pid);
             roomRef.transaction(room => {
                 if (!room || (room.state !== 'lobby' && room.state !== 'finished') || room.countdownStartAt != null) return; // already stamped, or not in a startable state — abort. NOTE 'finished' is startable: a rematch (round 2+) arms from the post-scoreboard 'finished' state, not 'lobby'.
-                room.countdownStartAt = Date.now();
+                room.countdownStartAt = serverNow();
                 room.countdownPlayers = pids;
                 return room;
             });
@@ -2916,7 +2938,7 @@ function syncStartCountdown(data) {
 
     if (!startCountdownInterval) {
         const tick = () => {
-            const rem = endAt - Date.now();
+            const rem = endAt - serverNow();
             document.getElementById('start-countdown-num').textContent = Math.max(0, Math.ceil(rem / 1000));
             if (rem <= 0) {
                 clearInterval(startCountdownInterval); startCountdownInterval = null;
@@ -2977,14 +2999,14 @@ function updateLobbyGameTimer(data) {
     if (lobbyGameTimerInterval) { clearInterval(lobbyGameTimerInterval); lobbyGameTimerInterval = null; }
     const durationMs = (data.settings?.minutes || 3) * 60000;
     const endAt = (data.startedAt || 0) + durationMs;
-    if (data.state !== 'playing' || !data.startedAt || endAt <= Date.now()) {
+    if (data.state !== 'playing' || !data.startedAt || endAt <= serverNow()) {
         banner.style.display = 'none';
         return;
     }
     banner.style.display = '';
     const el = document.getElementById('lobby-game-time');
     const tick = () => {
-        const rem = Math.max(0, endAt - Date.now());
+        const rem = Math.max(0, endAt - serverNow());
         const s = Math.ceil(rem / 1000);
         el.textContent = `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
         if (rem <= 0) {
@@ -3095,7 +3117,7 @@ async function joinLobby() {
     if (existing) {
         await roomRef.child(`players/${playerId}`).update({ name, online: true, ready: false, skipping: false, left: false });
     } else {
-        await roomRef.child(`players/${playerId}`).set({ name, gamePoints: 0, joined: Date.now(), online: true, ready: false, skipping: false, left: false });
+        await roomRef.child(`players/${playerId}`).set({ name, gamePoints: 0, joined: serverNow(), online: true, ready: false, skipping: false, left: false });
     }
     roomRef.child(`players/${playerId}/online`).onDisconnect().set(false);
     const joinBtn = document.getElementById('join-lobby-btn');
@@ -3265,7 +3287,7 @@ async function _runAutoStartGame(data) {
         const frozen = countdownFrozen(room);
         room.state = 'playing';
         room.board = board;
-        room.startedAt = Date.now();
+        room.startedAt = serverNow();
         room.currentRound = nextRound;
         room.countdownStartAt = null;
         room.countdownPlayers = null;
@@ -3286,7 +3308,7 @@ function renderRoomPlaying(data) {
     if (!data.board) return;
     // Ignore stale intermediate Firebase events where the round has already expired
     const durationMs = (data.settings?.minutes || 3) * 60000;
-    if (data.startedAt && (data.startedAt + durationMs) < Date.now()) return;
+    if (data.startedAt && (data.startedAt + durationMs) < serverNow()) return;
     roomPlayingInitialized = true;
 
     // Record that I'm actively in this round, so "Back to Lobby" can tell who's
@@ -3336,7 +3358,7 @@ function startRoomCountdown(endAt) {
     if (roomCountdownInterval) { clearInterval(roomCountdownInterval); roomCountdownInterval = null; }
     const el = document.getElementById('timer-display');
     function tick() {
-        const rem = Math.max(0, endAt - Date.now());
+        const rem = Math.max(0, endAt - serverNow());
         const s   = Math.ceil(rem / 1000);
         el.textContent = `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
         el.classList.toggle('urgent', rem > 0 && rem <= 30000);
