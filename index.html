@@ -782,6 +782,8 @@ let startCountdownInterval = null;     // local ticker for the pre-game "startin
 let startCountdownData = null;         // latest room snapshot, for the host's start decision
 let startCountdownFiredFor = null;     // the countdownStartAt timestamp we've already kicked off autoStartGame for — makes the start a one-shot per countdown (stale 'lobby' echoes during the lobby→playing window can't re-arm it)
 let startingGame = false;              // re-entrancy guard so autoStartGame's expensive board generation can't stack up on the main thread
+let startHealTimer = null;             // grace timer: state:'playing' but the start-winner's board/round publish never arrived → flip the room back to the lobby
+const START_HEAL_GRACE_MS = 8000;      // how long to wait for the start-winner's publish before self-healing
 let lastRoomData = null;              // most recent room snapshot (for presence/visibility logic)
 let lobbyGameTimerInterval = null;     // ticker for the "game in progress" clock shown to waiters
 let connectedListenerSet = false;      // .info/connected presence listener registered once
@@ -2841,17 +2843,45 @@ function handleRoomUpdate(data) {
             scoreBoardShown = false;
             roomScoreboardClosedRound = -1;
         }
-        // If I'm the only online player AND the round has already expired, this is a
-        // stale/abandoned game (everyone left long ago) — bounce back to the lobby rather
-        // than drop into a dead round. A live round, including a freshly-started solo
-        // game, is allowed to play on so a single player can play by themselves.
+        // state:'playing' is only real (for me) once the start-winner's ONE publish —
+        // board + fresh startedAt + new currentRound — has arrived and the round isn't
+        // over. Two waiting cases share this branch:
+        //  • the sub-second gap between the 'state' lock committing and the winner's
+        //    publish landing (normal start — wait quietly in the lobby);
+        //  • a WEDGED start (the winner died between lock and publish) or a long-dead
+        //    round (rejoining an abandoned room). For these, arm a one-shot grace timer;
+        //    if the publish still hasn't arrived when it fires, ANY waiting client may
+        //    flip the room back to the lobby via the state lock (losers abort cleanly).
+        //    This replaces the old instant "aloneOnline" bounce, which could misfire
+        //    during a legitimate rematch gap and kill the start.
         if (!roomPlayingInitialized) {
-            const onlinePlayers = Object.entries(data.players || {}).filter(([,p]) => p.online !== false);
-            const aloneOnline   = onlinePlayers.every(([pid]) => pid === playerId);
-            const durationMs     = (data.settings?.minutes || 3) * 60000;
-            const roundExpired   = data.startedAt && (data.startedAt + durationMs) < serverNow();
-            if (aloneOnline && roundExpired) {
-                roomRef.update({ state: 'lobby' });
+            const durationMs   = (data.settings?.minutes || 3) * 60000;
+            const roundExpired = data.startedAt && (data.startedAt + durationMs) < serverNow();
+            const waitingOnStart = !data.board || roundExpired;
+            if (!waitingOnStart && startHealTimer) { clearTimeout(startHealTimer); startHealTimer = null; }
+            if (waitingOnStart) {
+                if (!startHealTimer) {
+                    startHealTimer = setTimeout(() => {
+                        startHealTimer = null;
+                        const d = lastRoomData;
+                        if (!d || d.state !== 'playing' || roomPlayingInitialized) return;
+                        const dur = (d.settings?.minutes || 3) * 60000;
+                        const stillDead = !d.board || (d.startedAt && (d.startedAt + dur) < serverNow());
+                        if (stillDead && roomRef)
+                            roomRef.child('state').transaction(cur => cur === 'playing' ? 'lobby' : undefined,
+                                (err, committed) => {
+                                    // The dead start left the countdown stamp and ready flags
+                                    // behind (the winner's publish would have cleared them).
+                                    // Clear them like a cancel, so the lobby isn't wedged
+                                    // (stale countdownStartAt + latched clients + everyone
+                                    // ready = nobody could ever re-arm). Players re-ready.
+                                    if (committed) cancelStartCountdown();
+                                },
+                                false);
+                    }, START_HEAL_GRACE_MS);
+                }
+                showPanel('lobby');
+                renderLobby(data);
                 return;
             }
         }
@@ -2921,21 +2951,29 @@ function checkAutoStart(data) {
     // and clear it the instant that stops being true (someone un-readies / steps away).
     if (isHost) {
         if (allReady && cd == null) {
-            // Freeze the participant set atomically with the clock — AND write it exactly
-            // ONCE. A plain update() here is a non-atomic read-modify-write: because this
-            // client doesn't see its own write until the round-trip completes, an
-            // interleaved room event (a presence heartbeat) that still shows
-            // countdownStartAt==null re-enters this branch and stamps a SECOND, later
-            // timestamp — restarting the "starting in 5…" dialog from the top (the
-            // reported "double countdown"). A transaction that no-ops when the clock is
-            // already set makes it idempotent, so only the first stamp wins.
+            // Stamp the shared countdown clock exactly ONCE, via a transaction on JUST
+            // the countdownStartAt child. Two lessons from the live post-mortems:
+            //  • it must be a write-once transaction (a plain update can double-stamp
+            //    under interleaved heartbeats — the "double countdown");
+            //  • it must be a transaction on a TINY, rarely-changing location with
+            //    applyLocally=false. The previous whole-room transaction re-ran on
+            //    EVERY descendant write (presence heartbeats, ready flips), starving
+            //    under churn while its optimistic local echo showed a countdown that
+            //    existed on this phone only — "countdown happens then nothing".
+            // On commit, the winner alone freezes the roster with a plain update
+            // (plain writes never revert). The sub-latency window where the clock is
+            // set but countdownPlayers hasn't landed degrades gracefully: a null
+            // freeze-set means "count all playable" — the pre-freeze behavior.
             const pids = counted.map(([pid]) => pid);
-            roomRef.transaction(room => {
-                if (!room || (room.state !== 'lobby' && room.state !== 'finished') || room.countdownStartAt != null) return; // already stamped, or not in a startable state — abort. NOTE 'finished' is startable: a rematch (round 2+) arms from the post-scoreboard 'finished' state, not 'lobby'.
-                room.countdownStartAt = serverNow();
-                room.countdownPlayers = pids;
-                return room;
-            });
+            const stamp = serverNow();
+            roomRef.child('countdownStartAt').transaction(
+                cur => cur != null ? undefined : stamp, // already stamped — abort
+                (err, committed) => {
+                    if (err || !committed) return;
+                    roomRef.update({ countdownPlayers: pids });
+                },
+                false // applyLocally: no local-only phantom countdown
+            );
             return; // the resulting room update re-enters here and shows the dialog
         }
         if (!allReady && cd != null) {
@@ -3296,52 +3334,70 @@ async function _runAutoStartGame(data) {
     if (!dictionary.size) await loadDictionary();
     await loadGameWordSelections();
 
-    // Cache the room locally (so the transaction's first run sees real data, not a
-    // null cache miss) and bail early if the start is no longer valid.
+    // Bail early if the start is no longer valid (countdown cancelled at the buzzer).
     const snap = await roomRef.once('value');
     const d0 = snap.val();
     if (!d0 || (d0.state !== 'lobby' && d0.state !== 'finished') || d0.countdownStartAt == null) return;
-    const s = d0.settings || {rows:4,cols:4,minutes:3};
-    const rows = s.rows || s.size || 4;
-    const cols = s.cols || s.size || 4;
-    const board = s.mode === 'random' ? generateProceduralBoard(20) : generateShapedBoard(rows, cols);
-    const { words, bonusWords: bonus } = computeRoomWords(board);
-    if (words.length) board.words = words;
-    if (bonus.length) board.bonusWords = bonus;
 
-    // ONE atomic whole-room transaction flips lobby/finished → playing and writes the
-    // board, fresh startedAt, currentRound and per-player flags in a single commit.
-    // Because state and startedAt land together, no client ever sees state:'playing'
-    // beside the PREVIOUS round's stale startedAt (which would trip the "abandoned
-    // round" bounce). There's no two-step window, so the room can't wedge mid-start.
-    // Exactly one caller wins; concurrent callers see state already advanced (or the
-    // countdown cancelled) and abort — no double-start.
-    roomRef.transaction(room => {
-        if (!room) return;                                                // room gone — abort
-        if (room.state !== 'lobby' && room.state !== 'finished') return;  // already started — abort
-        if (room.countdownStartAt == null) return;                        // countdown cancelled — abort
-        const nextRound = (room.currentRound ?? -1) + 1;
-        // Participants = players frozen into countdownPlayers when the countdown began,
-        // still online and not skipping. Only they get pulled onto the board; late
-        // joiners / away / skipping players keep their old playingRound and wait in the
-        // lobby for the next game.
-        const frozen = countdownFrozen(room);
-        room.state = 'playing';
-        room.board = board;
-        room.startedAt = serverNow();
-        room.currentRound = nextRound;
-        room.countdownStartAt = null;
-        room.countdownPlayers = null;
-        for (const pid of Object.keys(room.players || {})) {
-            const p = room.players[pid];
-            p.closedScoreboard = false;
-            p.ready = false;
-            p.bailedRound = null;
-            if (p.online !== false && !p.skipping && !p.left && (!frozen || frozen.has(pid)))
-                p.playingRound = nextRound;
-        }
-        return room;
-    });
+    // ── The start, in two steps (the proven "solid working copy" shape) ─────
+    // STEP 1 — the mutex: a transaction on JUST the 'state' child. Live post-mortems
+    // proved the previous whole-room transaction was fatally fragile: it re-ran on
+    // EVERY descendant write (presence heartbeats, ready flips), starving under churn
+    // and never committing — while its optimistic local echo (applyLocally default)
+    // had already shown each phone its OWN privately-generated board. Result: phantom
+    // rounds the server never saw (rooms Y79S34/79QS3Z/GDUART: server state 'lobby',
+    // currentRound behind, no board — yet full scores written by the phantom clients).
+    // A child-'state' transaction is a tiny, rarely-written location: heartbeats can't
+    // conflict with it, so it converges. applyLocally=false so losers (and a starved
+    // attempt) never emit a local 'playing' — nothing renders until server truth.
+    // Any frozen participant may fire at the buzzer (host-steps-away safety): the lock
+    // picks exactly one winner, everyone else aborts cleanly and cheaply (no board gen).
+    roomRef.child('state').transaction(
+        cur => (cur === 'lobby' || cur === 'finished') ? 'playing' : undefined,
+        async (err, committed) => {
+            if (err || !committed) return;
+            // STEP 2 — the WINNER ALONE generates the board and publishes everything
+            // in ONE plain update. Plain writes never re-run and never revert, so all
+            // clients receive the same server-committed board. renderRoomPlaying needs
+            // data.board + the new currentRound, which arrive together in this update —
+            // no client renders anything before server truth exists. (If the winner
+            // dies before this lands, handleRoomUpdate's grace-timer heal flips the
+            // room back to the lobby — no wedge.)
+            const roomSnap = await roomRef.once('value');
+            const d = roomSnap.val();
+            if (!d) return;
+            const s = d.settings || {rows:4,cols:4,minutes:3};
+            const rows = s.rows || s.size || 4;
+            const cols = s.cols || s.size || 4;
+            const nextRound = (d.currentRound ?? -1) + 1;
+            const board = s.mode === 'random' ? generateProceduralBoard(20) : generateShapedBoard(rows, cols);
+            const { words, bonusWords: bonus } = computeRoomWords(board);
+            if (words.length) board.words = words;
+            if (bonus.length) board.bonusWords = bonus;
+            // Participants = players frozen into countdownPlayers when the countdown
+            // began, still online and not skipping. Only they get pulled onto the
+            // board; late joiners / away / skipping players keep their old playingRound
+            // and wait in the lobby for the next game.
+            const frozen = countdownFrozen(d);
+            const updates = {
+                board,
+                startedAt: serverNow(),
+                currentRound: nextRound,
+                countdownStartAt: null,
+                countdownPlayers: null,
+            };
+            for (const pid of Object.keys(d.players || {})) {
+                const p = d.players[pid];
+                updates[`players/${pid}/closedScoreboard`] = false;
+                updates[`players/${pid}/ready`] = false;
+                updates[`players/${pid}/bailedRound`] = null;
+                if (p.online !== false && !p.skipping && !p.left && (!frozen || frozen.has(pid)))
+                    updates[`players/${pid}/playingRound`] = nextRound;
+            }
+            await roomRef.update(updates);
+        },
+        false // applyLocally: losers/starved attempts must never locally show 'playing'
+    );
 }
 
 function renderRoomPlaying(data) {
@@ -3418,7 +3474,8 @@ async function endRoomGame() {
     await roomRef.child(`players/${playerId}`).update({ ready: false, closedScoreboard: false });
 
     roomRef.child('state').transaction(cur => cur==='playing' ? 'finished' : undefined,
-        (err, committed) => { if (committed) waitForAllScores(roomCurrentRound).then(awardGamePoints); });
+        (err, committed) => { if (committed) waitForAllScores(roomCurrentRound).then(awardGamePoints); },
+        false); // applyLocally: never locally show 'finished' unless the server agrees
 }
 
 function waitForAllScores(round) {
@@ -3459,7 +3516,8 @@ async function awardGamePoints() {
             for (const pid of winners)
                 await roomRef.child(`players/${pid}/gamePoints`).transaction(p=>(p||0)+1);
             await roomRef.child(`pointsRound${round}`).set(`done:${winners.join(',')||'none'}`);
-        }
+        },
+        false // applyLocally: the 'processing' lock value must never echo locally
     );
 }
 
@@ -3652,7 +3710,7 @@ async function backToLobby() {
         const stillActive = Object.values(players).some(p =>
             p.online !== false && p.playingRound === round &&
             p.bailedRound !== round && p.rounds?.[round]?.score == null);
-        if (!stillActive) roomRef.child('state').transaction(cur => cur === 'playing' ? 'lobby' : undefined);
+        if (!stillActive) roomRef.child('state').transaction(cur => cur === 'playing' ? 'lobby' : undefined, undefined, false);
     } catch { /* listener reconciles on reconnect */ }
 }
 
