@@ -499,7 +499,7 @@
 
 <div class="loader" id="loader">
     <div class="spinner"></div>
-    <div id="loader-text">Loading Dictionary…</div>
+    <div id="loader-text">Loading…</div>
 </div>
 <script>
     // Tutorial onboarding: pre-hide the loader whenever the walkthrough will show
@@ -2939,12 +2939,21 @@ function checkAutoStart(data) {
     // can't be fooled by unsynchronized device clocks). A late joiner isn't in the
     // set, so they can't passively block it — the game starts without them and they
     // wait in the lobby. (They can still hit Cancel in the dialog to abort the start
-    // for everyone; that's the intended R3 behavior. And a frozen player who steps
-    // away is dropped by the online filter above — away players are ignored.)
+    // for everyone; that's the intended R3 behavior.)
     const frozen = countdownFrozen(data);
     const counted = (cd == null ? playable : playable.filter(([pid]) => !frozen || frozen.has(pid)))
         .sort((a,b) => (a[1].joined||0)-(b[1].joined||0));
-    const allReady = counted.length > 0 && counted.every(([,p]) => p.ready);
+    // An AWAY player (in the room, not skipping, currently disconnected/backgrounded)
+    // HOLDS UP the start: a game may begin only when everyone present is ready — unless
+    // that player has chosen to Skip this round. So away blocks; skipping does not.
+    // Scoped to the same population as `counted`: before a countdown, every away player
+    // in the roster blocks; once one is running, only a frozen participant who then
+    // steps away blocks (a late joiner who goes away still can't affect the group, the
+    // same freeze rule that protects against not-ready late joiners).
+    const awayBlockers = Object.entries(players).filter(([pid,p]) =>
+        p.online === false && !p.skipping && !p.left && p.name && p.name !== 'undefined'
+        && (cd == null || !frozen || frozen.has(pid)));
+    const allReady = counted.length > 0 && awayBlockers.length === 0 && counted.every(([,p]) => p.ready);
     const isHost   = counted.length > 0 && counted[0][0] === playerId;
 
     // The host owns the shared countdown clock: start it once everyone's ready,
