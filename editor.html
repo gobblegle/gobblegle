@@ -275,6 +275,9 @@
                 <div style="font-size:0.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.07em">Scheduled Boards</div>
                 <button class="btn" id="save-btn" onclick="saveBoard()">Save Board</button>
             </div>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;font-size:0.82rem;margin-bottom:8px">
+                <input type="checkbox" id="mini-mode-cb" onchange="onMiniModeToggle()"> 🧩 Daily Mini (edit the Mini/Giblet puzzles)
+            </label>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
                 <button onclick="calPrevMonth()" style="background:none;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:1.1rem;padding:2px 10px;font-family:inherit;color:var(--text);line-height:1.4">‹</button>
                 <span id="cal-month-label" style="font-weight:700;font-size:0.9rem"></span>
@@ -454,12 +457,27 @@ let edSelectedDate  = _puzzleToday();
 let edCalendarYear  = +edSelectedDate.slice(0, 4);
 let edCalendarMonth = +edSelectedDate.slice(5, 7) - 1; // show the month that contains "today"
 let edAvailDates    = null; // cached after first fetch
+// When the "Daily Mini" toggle is on, the editor reads/writes the parallel mini
+// Firebase tree instead of the regular daily one.
+let edMini = false;
+const EBOARDS = () => edMini ? 'dailyMiniBoards'     : 'dailyBoards';
+const EDATES  = () => edMini ? 'dailyMiniBoardDates' : 'dailyBoardDates';
+const ECONFIG = () => edMini ? 'boardConfigMini'     : 'boardConfig';
+
+async function onMiniModeToggle() {
+    edMini = document.getElementById('mini-mode-cb').checked;
+    document.getElementById('save-btn').textContent = edMini ? 'Save Mini Board' : 'Save Board';
+    await initSchedCalendar();  // refresh availability dots for the active (daily/mini) set
+    // Reload the currently-selected date from the active set (or start a fresh board).
+    const hasBoard = !!(edAvailDates && edAvailDates[edSelectedDate]);
+    await selectCalendarDay(edSelectedDate, hasBoard);
+}
 
 async function initSchedCalendar() {
     edAvailDates = {};
     if (db) {
         try {
-            const snap = await db.ref('dailyBoardDates').once('value');
+            const snap = await db.ref(EDATES()).once('value');
             edAvailDates = snap.val() || {};
         } catch {}
     }
@@ -557,7 +575,7 @@ async function _loadDailyBoardIntoEditor(dateStr) {
     if (!db) return;
     showStatus('Loading…', 'info');
     try {
-        const snap = await db.ref(`dailyBoards/${dateStr}`).once('value');
+        const snap = await db.ref(`${EBOARDS()}/${dateStr}`).once('value');
         const cfg = snap.val();
         if (!cfg) { showStatus(`No board found for ${dateStr}.`, 'err'); return; }
         editorRows = cfg.rows; editorCols = cfg.cols;
@@ -596,12 +614,12 @@ async function saveBoard() {
         if (_edPuzzleRemoved.size)  payload.puzzleRemoved  = [..._edPuzzleRemoved];
         if (_edPuzzleIncluded.size) payload.puzzleIncluded = [..._edPuzzleIncluded];
         if (_edPuzzleCustom.length) payload.puzzleCustom   = _edPuzzleCustom.slice();
-        await db.ref(`dailyBoards/${edSelectedDate}`).set(payload);
-        await db.ref(`dailyBoardDates/${edSelectedDate}`).set(true);
+        await db.ref(`${EBOARDS()}/${edSelectedDate}`).set(payload);
+        await db.ref(`${EDATES()}/${edSelectedDate}`).set(true);
         if (edAvailDates) edAvailDates[edSelectedDate] = true; // update local cache
         const today = _puzzleToday();
-        if (edSelectedDate === today) await db.ref('boardConfig').set(payload);
-        showStatus(`Saved for ${edSelectedDate}!`, 'ok');
+        if (edSelectedDate === today) await db.ref(ECONFIG()).set(payload);
+        showStatus(`Saved ${edMini ? 'Mini ' : ''}board for ${edSelectedDate}!`, 'ok');
         renderSchedCalendar();
     } catch(e) {
         showStatus(`Save failed: ${e.message}`, 'err');
@@ -615,6 +633,7 @@ function testBoard() {
         showStatus('Letters are not all connected.', 'err'); return;
     }
     localStorage.setItem('G2_test_board', JSON.stringify({ rows: editorRows, cols: editorCols, cells }));
+    localStorage.setItem('G2_test_mini', edMini ? '1' : '0'); // preview with mini header + share
     localStorage.setItem('G2_test_word_sel', JSON.stringify([...edWordSelections]));
     // Hand the test page the exact word list (custom adds + per-puzzle removals applied).
     localStorage.setItem('G2_test_words', JSON.stringify(_edActivePuzzleWords()));

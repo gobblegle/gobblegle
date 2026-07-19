@@ -324,8 +324,8 @@
     <button class="theme-toggle" id="theme-toggle-btn" onclick="toggleDarkMode()" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
     <div class="header-title">
         <div style="display:flex;align-items:center;gap:8px;">
-            <img src="gobblegleturkey.png" alt="">
-            <img src="gobblegletitle.png" alt="Gobblegle">
+            <img id="header-mascot" src="gobblegleturkey.png" alt="">
+            <img id="header-wordmark" src="gobblegletitle.png" alt="Gobblegle">
         </div>
         <div class="header-subtitle">A double-back path finding word game</div>
     </div>
@@ -1043,8 +1043,17 @@ function loadProgress() {
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
+// Preview a mini board with the mini header + share wording (set by the editor's Test).
+const testMini = localStorage.getItem('G2_test_mini') === '1';
+
 window.addEventListener('DOMContentLoaded', async () => {
     setupPointerListeners();
+    if (testMini) {
+        const mascot = document.getElementById('header-mascot');
+        const wordmark = document.getElementById('header-wordmark');
+        if (mascot) { mascot.src = 'gibletmain.png'; mascot.style.height = '48px'; }
+        if (wordmark) wordmark.style.display = 'none';
+    }
     await loadBoardConfig();
     await loadDictionary();
     loadProgress();
@@ -2224,7 +2233,8 @@ function shareGame() {
     const secs = parseInt(localStorage.getItem('G2_share_time') || timerSeconds || 0);
     const mm = String(Math.floor(secs / 60)).padStart(2, '0');
     const ss = String(secs % 60).padStart(2, '0');
-    const text = `🦃 I played Gobblegle! 🦃\nFound ${foundWords.size}/${validWords.size}\n${mm}:${ss}\nhttps://gobblegle.github.io/gobblegle/`;
+    const headline = testMini ? "🦃 I played Gobblegle's Daily Giblet! 🦃" : '🦃 I played Gobblegle! 🦃';
+    const text = `${headline}\nFound ${foundWords.size}/${validWords.size}\n${mm}:${ss}\nhttps://gobblegle.github.io/gobblegle/`;
     if (navigator.share) {
         navigator.share({ title: 'Gobblegle', text }).catch(() => {});
     } else {

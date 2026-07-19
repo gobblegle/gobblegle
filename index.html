@@ -69,7 +69,26 @@
         }
         .header-title { display: flex; flex-direction: column; align-items: center; gap: 4px; }
         .header-title img { height: 38px; width: auto; display: block; }
+        /* Mini ("Giblet") mode: hide the wordmark and show the single combined logo, sized up. */
+        body.mini-mode #header-wordmark { display: none; }
+        body.mini-mode #header-mascot { height: 48px; }
         .header-subtitle { font-size: 0.95rem; font-weight: 700; color: var(--text); }
+        /* Puzzle-piece (🧩) mode button + its Daily/Mini popup. */
+        #mode-btn .puzzle-emoji { display: inline-block; filter: sepia(1) saturate(6) hue-rotate(-18deg); }
+        .mode-popup {
+            position: absolute; left: 0; bottom: 34px; z-index: 60;
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,0.18);
+            padding: 6px; display: flex; flex-direction: column; gap: 2px; min-width: 132px;
+        }
+        .mode-popup-item {
+            background: none; border: none; text-align: left; cursor: pointer;
+            font: inherit; font-weight: 700; color: var(--text);
+            padding: 9px 12px; border-radius: 7px; display: flex; align-items: center;
+        }
+        .mode-popup-item:hover { background: var(--cell-active); }
+        .mode-popup-item.active { color: var(--primary); }
+        .mode-popup-item.active::after { content: '✓'; margin-left: auto; font-size: 0.9rem; }
         .room-create-btn {
             position: absolute; right: 16px;
             background: var(--cell-active); color: var(--primary);
@@ -520,8 +539,8 @@
     <button id="burger-btn" onclick="toggleBurgerMenu(event)" title="Puzzles" aria-label="Puzzles" class="room-create-btn" style="position:absolute;left:16px;font-size:1.1rem;letter-spacing:0">☰</button>
     <div class="header-title">
         <div style="display:flex;align-items:center;gap:8px;">
-            <img src="gobblegleturkey.png" alt="">
-            <img src="gobblegletitle.png" alt="Gobblegle">
+            <img id="header-mascot" src="gobblegleturkey.png" alt="">
+            <img id="header-wordmark" src="gobblegletitle.png" alt="Gobblegle">
         </div>
         <div class="header-subtitle">A double-back path finding word game</div>
     </div>
@@ -545,7 +564,7 @@
     <div onclick="closeBurgerMenu()" style="position:absolute;inset:0;background:rgba(0,0,0,0.4)"></div>
     <div style="position:absolute;left:0;top:0;bottom:0;width:300px;max-width:90vw;background:var(--surface);overflow-y:auto;padding:16px;box-shadow:4px 0 24px rgba(0,0,0,0.18);display:flex;flex-direction:column;gap:0">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-            <span style="font-weight:800;font-size:1.1rem">Puzzles</span>
+            <span id="drawer-title" style="font-weight:800;font-size:1.1rem">Puzzles</span>
             <button onclick="closeBurgerMenu()" style="background:none;border:none;font-size:1.25rem;cursor:pointer;color:var(--text-muted);padding:2px 6px;line-height:1">✕</button>
         </div>
         <button onclick="loadTodaysPuzzle()" class="btn" style="width:100%;margin-bottom:14px">Today's Puzzle</button>
@@ -583,6 +602,11 @@
         <button id="share-btn" onclick="shareGame()" title="Share your result" style="position:absolute;top:0;left:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'"><img src="turkeyshare.png" alt="Share" style="height:1.45rem;width:auto;display:block"></button>
         <div id="win-msg" style="display:none;position:absolute;top:0;left:0;right:0;height:34px;align-items:center;justify-content:center;font-size:0.88rem;font-weight:800;color:var(--primary);letter-spacing:0.08em;pointer-events:none;">YOU WIN!</div>
         <button id="rotate-btn" onclick="rotateBoard()" title="Rotate board 90°" style="position:absolute;top:0;right:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;color:var(--text-muted);opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'">↻</button>
+        <button id="mode-btn" onclick="toggleModePopup(event)" title="Choose puzzle" aria-label="Choose puzzle" style="position:absolute;bottom:0;left:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;opacity:0.7;transition:opacity .15s" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.7'"><span class="puzzle-emoji">🧩</span></button>
+        <div class="mode-popup" id="mode-popup" style="display:none">
+            <button class="mode-popup-item" data-mode="daily" onclick="setGameMode('daily')">Daily</button>
+            <button class="mode-popup-item" data-mode="mini" onclick="setGameMode('mini')">Mini</button>
+        </div>
         <div class="board-container" id="board-container">
             <svg class="svg-overlay" id="svg-overlay"></svg>
             <div class="grid" id="grid"></div>
@@ -746,6 +770,7 @@ try {
 // ── State ──────────────────────────────────────────────────────────────────
 const DICT_CACHE_KEY = 'G2_dict_v3';
 const DAILY_CFG_CACHE_KEY = 'G2_dailycfg_v1'; // last good daily board, for offline "continue"
+const MINI_CFG_CACHE_KEY  = 'G2_minicfg_v1';  // last good mini board, for offline "continue"
 const FB_TIMEOUT_MS = 5000;                    // max wait for a Firebase board read
 let boardRows = 5, boardCols = 5, boardCells = [], cellElements = [];
 let dictionary = new Set(), validWords = new Set(), foundWords = new Set();
@@ -757,6 +782,14 @@ let preloadedWords = null;    // pre-computed word list from Firebase (avoids fu
 let preloadedBonusWords = null; // pre-computed Linguist Bonus list from Firebase
 let gameWordSelections = new Set(); // excluded words loaded from Firebase
 let currentBoardDate = null; // YYYY-MM-DD if showing a daily board, null otherwise
+// Which daily track is active: 'daily' (the main puzzle) or 'mini' (the easier "Giblet").
+// The two tracks live in parallel Firebase trees and have fully separate saved progress
+// (getBoardHash namespaces every G2_* key by mode).
+let gameMode = 'daily';
+const FB_BOARDS = m => m === 'mini' ? 'dailyMiniBoards'     : 'dailyBoards';
+const FB_DATES  = m => m === 'mini' ? 'dailyMiniBoardDates' : 'dailyBoardDates';
+const FB_CONFIG = m => m === 'mini' ? 'boardConfigMini'     : 'boardConfig';
+const CFG_CACHE_KEY = () => gameMode === 'mini' ? MINI_CFG_CACHE_KEY : DAILY_CFG_CACHE_KEY;
 let answersRevealed = false;
 let isSelecting = false, currentPath = [];
 let timerStarted = false, timerSeconds = 0, timerInterval = null, timerPaused = false;
@@ -766,6 +799,9 @@ let hintEvents = []; // [{type, t}] — solo per-hint timeline, drawn as distinc
 // Preloading + same-origin keeps the canvas untainted, so toDataURL()/native share still work.
 const shareGraphBgImg = new Image();
 shareGraphBgImg.src = 'graphbg.png';
+// Mini ("Giblet") share-chart backdrop — same same-origin + preloaded rules.
+const shareGraphBgImgMini = new Image();
+shareGraphBgImgMini.src = 'giblethbg.png';
 
 // Room state
 let roomMode = false, roomId = null, playerId = null;
@@ -1315,8 +1351,8 @@ async function loadBoardConfig() {
     const today = getPuzzleDate();
     try {
         if (db) {
-            // Try today's daily board first
-            const dailySnap = await withTimeout(db.ref(`dailyBoards/${today}`).once('value'), FB_TIMEOUT_MS);
+            // Try today's board for the active mode first
+            const dailySnap = await withTimeout(db.ref(`${FB_BOARDS(gameMode)}/${today}`).once('value'), FB_TIMEOUT_MS);
             if (dailySnap && dailySnap.exists()) {
                 const cfg = dailySnap.val();
                 boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
@@ -1326,9 +1362,9 @@ async function loadBoardConfig() {
                 cacheDailyConfig(today, cfg);
                 return;
             }
-            // Fall back to boardConfig (skip if the daily read timed out — go local instead)
+            // Fall back to the mode's live board mirror (skip if the read timed out — go local instead)
             if (dailySnap) {
-                const snap = await withTimeout(db.ref('boardConfig').once('value'), FB_TIMEOUT_MS);
+                const snap = await withTimeout(db.ref(FB_CONFIG(gameMode)).once('value'), FB_TIMEOUT_MS);
                 const cfg = snap && snap.val();
                 if (cfg) {
                     boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
@@ -1339,19 +1375,23 @@ async function loadBoardConfig() {
             }
         }
     } catch {}
-    // Offline / stalled: prefer the cached daily board so progress restores onto the right board
+    // Offline / stalled: prefer the cached board so progress restores onto the right board
     if (loadCachedDailyConfig(today)) return;
-    try {
-        const res = await fetch('./board-config.json', { cache: 'no-store' });
-        if (!res.ok) throw new Error();
-        const cfg = await res.json();
-        boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
-        if (cfg.words?.length) preloadedWords = new Set(cfg.words);
-        if (cfg.bonusWords?.length) preloadedBonusWords = new Set(cfg.bonusWords);
-    } catch {
-        const b = generateBoard(3, 3, Math.random);
-        boardRows = b.rows; boardCols = b.cols; boardCells = b.cells;
+    // The bundled board-config.json is a daily-only fallback; mini has no local file,
+    // so a mini that can't be fetched falls straight through to a generated board.
+    if (gameMode !== 'mini') {
+        try {
+            const res = await fetch('./board-config.json', { cache: 'no-store' });
+            if (!res.ok) throw new Error();
+            const cfg = await res.json();
+            boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
+            if (cfg.words?.length) preloadedWords = new Set(cfg.words);
+            if (cfg.bonusWords?.length) preloadedBonusWords = new Set(cfg.bonusWords);
+            return;
+        } catch {}
     }
+    const b = generateBoard(3, 3, Math.random);
+    boardRows = b.rows; boardCols = b.cols; boardCells = b.cells;
 }
 
 // After an instant render from cache, quietly check Firebase for today's board. If
@@ -1359,10 +1399,12 @@ async function loadBoardConfig() {
 // cache and re-render. No-op on poor/no connection — the user keeps playing the cache.
 async function refreshBoardConfigInBackground() {
     if (!db) return;
+    const modeAtStart = gameMode;
     const today = getPuzzleDate();
     const renderedCells = JSON.stringify(boardCells);
     try {
-        const snap = await withTimeout(db.ref(`dailyBoards/${today}`).once('value'), FB_TIMEOUT_MS);
+        const snap = await withTimeout(db.ref(`${FB_BOARDS(gameMode)}/${today}`).once('value'), FB_TIMEOUT_MS);
+        if (gameMode !== modeAtStart) return; // user switched modes mid-flight — don't clobber
         if (!snap || !snap.exists()) return;
         const cfg = snap.val();
         cacheDailyConfig(today, cfg);
@@ -1380,7 +1422,8 @@ async function refreshBoardConfigInBackground() {
 }
 
 function getBoardHash() {
-    if (currentBoardDate) return `daily_${currentBoardDate}`;
+    // Namespace by mode so the Daily and Mini tracks never share saved progress.
+    if (currentBoardDate) return `${gameMode === 'mini' ? 'mini' : 'daily'}_${currentBoardDate}`;
     return boardCells.flat().map(c => c||'_').join('');
 }
 
@@ -1388,7 +1431,7 @@ function getBoardHash() {
 // connectivity can still render it (and restore progress) instead of being stuck.
 function cacheDailyConfig(date, cfg) {
     try {
-        localStorage.setItem(DAILY_CFG_CACHE_KEY, JSON.stringify({
+        localStorage.setItem(CFG_CACHE_KEY(), JSON.stringify({
             date, rows: cfg.rows, cols: cfg.cols, cells: cfg.cells,
             words: cfg.words || null, bonusWords: cfg.bonusWords || null
         }));
@@ -1396,7 +1439,7 @@ function cacheDailyConfig(date, cfg) {
 }
 function loadCachedDailyConfig(date) {
     try {
-        const c = JSON.parse(localStorage.getItem(DAILY_CFG_CACHE_KEY) || 'null');
+        const c = JSON.parse(localStorage.getItem(CFG_CACHE_KEY()) || 'null');
         if (!c || c.date !== date) return false;
         // Reject a cache that's missing the board grid — accepting it would crash
         // renderBoard/calculateValidWords and leave the page stuck on a blank board.
@@ -1491,10 +1534,12 @@ async function renderCalendar() {
     let availDates = {};
     try {
         if (db) {
-            const snap = await db.ref('dailyBoardDates').once('value');
+            const snap = await db.ref(FB_DATES(gameMode)).once('value');
             availDates = snap.val() || {};
         }
     } catch {}
+    const titleEl = document.getElementById('drawer-title');
+    if (titleEl) titleEl.textContent = gameMode === 'mini' ? 'Mini Puzzles' : 'Puzzles';
     container.innerHTML = '';
     const today = new Date();
     // Show current month + up to 5 prior months that have at least one board
@@ -1559,7 +1604,7 @@ function renderCalendarMonth(monthDate, availDates) {
         dayNum.textContent = day;
 
         if (hasBoard && !isFuture) {
-            const hash = `daily_${dateStr}`;
+            const hash = `${gameMode === 'mini' ? 'mini' : 'daily'}_${dateStr}`;
             const found = JSON.parse(localStorage.getItem(`G2_found_${hash}`) || '[]');
             const total = localStorage.getItem(`G2_total_${hash}`);
 
@@ -1611,7 +1656,7 @@ async function loadDailyBoard(date) {
 
     if (!db) return;
     try {
-        const snap = await withTimeout(db.ref(`dailyBoards/${date}`).once('value'), FB_TIMEOUT_MS);
+        const snap = await withTimeout(db.ref(`${FB_BOARDS(gameMode)}/${date}`).once('value'), FB_TIMEOUT_MS);
         const cfg = snap && snap.val();
         if (!cfg) return;
         boardRows = cfg.rows; boardCols = cfg.cols; boardCells = cfg.cells;
@@ -1639,6 +1684,74 @@ async function loadDailyBoard(date) {
     } catch {}
 }
 
+// ── Daily / Mini mode switching ─────────────────────────────────────────────
+// The 🧩 button by the board opens a small popup to switch between the main
+// "Daily" puzzle and the easier "Mini" (Giblet). The two are fully separate
+// puzzles with independent saved progress (see getBoardHash).
+function toggleModePopup(e) {
+    e?.stopPropagation();
+    const popup = document.getElementById('mode-popup');
+    if (popup.style.display !== 'none') { popup.style.display = 'none'; return; }
+    updateModePopupActive();
+    popup.style.display = '';
+}
+function updateModePopupActive() {
+    document.querySelectorAll('#mode-popup .mode-popup-item').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === gameMode);
+    });
+}
+// Swap the header logo: Daily shows the turkey mascot + wordmark; Mini shows the
+// single combined Giblet logo (gibletmain.png) with the wordmark hidden.
+function updateHeaderForMode() {
+    const mascot = document.getElementById('header-mascot');
+    const wordmark = document.getElementById('header-wordmark');
+    if (!mascot) return;
+    if (gameMode === 'mini') {
+        mascot.src = 'gibletmain.png';
+        if (wordmark) wordmark.style.display = 'none';
+    } else {
+        mascot.src = 'gobblegleturkey.png';
+        if (wordmark) wordmark.style.display = '';
+    }
+}
+async function setGameMode(newMode) {
+    if (roomMode) return;
+    const popup = document.getElementById('mode-popup');
+    if (popup) popup.style.display = 'none';
+    if (newMode === gameMode) return;
+
+    // Persist the OUTGOING board first (still under the old mode's correct hash),
+    // before any state is reset — otherwise its timer/found words are lost.
+    saveProgress();
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    timerStarted = false; timerPaused = false; timerSeconds = 0;
+    updateTimerDisplay();
+
+    gameMode = newMode;
+    document.body.classList.toggle('mini-mode', newMode === 'mini');
+    updateHeaderForMode();
+    updateModePopupActive();
+    try { localStorage.setItem('G2_gamemode', newMode); } catch {}
+    history.replaceState({}, '', newMode === 'mini' ? location.pathname + '?mini' : location.pathname);
+
+    // Load today's board for the new mode (mode-aware, with the full offline fallback
+    // chain). loadProgress() then restores this mode's own saved progress via the hash.
+    await loadBoardConfig();
+    if (!preloadedWords && !dictionary.size) await loadDictionary();
+    loadProgress();
+    calculateValidWords();
+    if (currentBoardDate) localStorage.setItem(`G2_total_${getBoardHash()}`, validWords.size);
+    renderBoard();
+    clearPathUI();
+    updateScoreUI();
+    updateTileHints();
+    updateAnswerRevealSection();
+
+    // If the Puzzles drawer is open, re-render it for the newly active set.
+    const panel = document.getElementById('burger-panel');
+    if (panel && panel.style.display !== 'none') renderCalendar();
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
     setupPointerListeners();
@@ -1657,6 +1770,17 @@ window.addEventListener('DOMContentLoaded', async () => {
             return;
         }
     }
+
+    // Resolve the starting track BEFORE any board/cache read (both are mode-aware):
+    // explicit ?mini link  >  last-used mode  >  default Daily.
+    try {
+        const miniParam = new URLSearchParams(location.search).get('mini') !== null;
+        gameMode = (miniParam || localStorage.getItem('G2_gamemode') === 'mini') ? 'mini' : 'daily';
+    } catch { gameMode = 'daily'; }
+    document.body.classList.toggle('mini-mode', gameMode === 'mini');
+    updateHeaderForMode();
+    updateModePopupActive();
+    if (gameMode === 'mini') history.replaceState({}, '', location.pathname + '?mini');
 
     // Solo mode — fast path: if today's board is already cached locally (with its
     // word list), render it instantly with NO overlay and NO network. Only show the
@@ -1735,6 +1859,12 @@ window.addEventListener('DOMContentLoaded', async () => {
             && !menu.contains(e.target)
             && e.target !== document.getElementById('start-room-btn'))
             menu.style.display = 'none';
+        const modePopup = document.getElementById('mode-popup');
+        const modeBtn = document.getElementById('mode-btn');
+        if (modePopup && modePopup.style.display !== 'none'
+            && !modePopup.contains(e.target)
+            && !(modeBtn && modeBtn.contains(e.target)))
+            modePopup.style.display = 'none';
         const burgerPanel = document.getElementById('burger-panel');
         if (burgerPanel.style.display !== 'none'
             && e.target === burgerPanel)  // clicking the dark overlay (not the drawer itself)
@@ -2749,6 +2879,8 @@ async function initRoomMode(rid) {
     pauseTimer();   // stop auto-save interval so it can't write under the wrong hash
     await loadGameWordSelections(); // needed by host for filtered board generation
     document.getElementById('burger-btn').style.display = 'none';
+    document.getElementById('mode-btn').style.display = 'none'; // Daily/Mini switch is solo-only
+    document.getElementById('mode-popup').style.display = 'none';
     closeBurgerMenu();
 
     roomMode  = true;
@@ -3751,6 +3883,7 @@ async function leaveRoom() {
     document.getElementById('game-container').style.display='';
     document.getElementById('start-room-btn').style.display='';
     document.getElementById('burger-btn').style.display='';
+    document.getElementById('mode-btn').style.display='';
 
     // Reload solo board and progress
     resetTimer();
@@ -3801,13 +3934,14 @@ function renderShareChart() {
     // Faint decorative backdrop, contained + centered in the plot area (behind everything
     // else). Skipped silently until the same-origin image has decoded, so rendering stays
     // synchronous. Only drawn when loaded — never taints the canvas.
-    if (shareGraphBgImg.complete && shareGraphBgImg.naturalWidth > 0) {
-        const iw = shareGraphBgImg.naturalWidth, ih = shareGraphBgImg.naturalHeight;
+    const bgImg = gameMode === 'mini' ? shareGraphBgImgMini : shareGraphBgImg;
+    if (bgImg.complete && bgImg.naturalWidth > 0) {
+        const iw = bgImg.naturalWidth, ih = bgImg.naturalHeight;
         const s = Math.min(plotW / iw, plotH / ih);   // contain: fit fully, as big as possible
         const dw = iw * s, dh = ih * s;
         ctx.save();
         ctx.globalAlpha = 0.25;
-        ctx.drawImage(shareGraphBgImg, x0 + (plotW - dw) / 2, y1 + (plotH - dh) / 2, dw, dh);
+        ctx.drawImage(bgImg, x0 + (plotW - dw) / 2, y1 + (plotH - dh) / 2, dw, dh);
         ctx.restore();
     }
 
@@ -3940,7 +4074,8 @@ function shareGame() {
     const hintWords = ['Zero','One','Two','Three','Four'];
     const n = hintsUsed.size;
     const hintLine = `${hintWords[n] ?? n} hint${n === 1 ? '' : 's'} used`;
-    const text = `🦃 I played Gobblegle! 🦃\n${dateStr}\nFound: ${foundWords.size}/${validWords.size}\nScore: ${score}\n${timeStr}\n${hintLine}\nhttps://gobblegle.com`;
+    const headline = gameMode === 'mini' ? "🦃 I played Gobblegle's Daily Giblet! 🦃" : '🦃 I played Gobblegle! 🦃';
+    const text = `${headline}\n${dateStr}\nFound: ${foundWords.size}/${validWords.size}\nScore: ${score}\n${timeStr}\n${hintLine}\nhttps://gobblegle.com`;
     // Preview the shareable card: the text summary on top, the words + score chart
     // below. Rendered synchronously to a canvas — this avoids an iOS Safari
     // canvas.toBlob() callback hang that left mobile shares blank. null → text-only.
