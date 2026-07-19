@@ -76,7 +76,7 @@
         /* Puzzle-piece (🧩) mode button + its Daily/Mini popup. */
         #mode-btn .puzzle-emoji { display: inline-block; filter: sepia(1) saturate(6) hue-rotate(-18deg); }
         .mode-popup {
-            position: absolute; left: 0; bottom: 34px; z-index: 60;
+            position: absolute; left: 0; bottom: 100%; margin-bottom: 6px; z-index: 60;
             background: var(--surface); border: 1px solid var(--border);
             border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,0.18);
             padding: 6px; display: flex; flex-direction: column; gap: 2px; min-width: 132px;
@@ -602,10 +602,12 @@
         <button id="share-btn" onclick="shareGame()" title="Share your result" style="position:absolute;top:0;left:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'"><img src="turkeyshare.png" alt="Share" style="height:1.45rem;width:auto;display:block"></button>
         <div id="win-msg" style="display:none;position:absolute;top:0;left:0;right:0;height:34px;align-items:center;justify-content:center;font-size:0.88rem;font-weight:800;color:var(--primary);letter-spacing:0.08em;pointer-events:none;">YOU WIN!</div>
         <button id="rotate-btn" onclick="rotateBoard()" title="Rotate board 90°" style="position:absolute;top:0;right:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;color:var(--text-muted);opacity:0.55;transition:opacity .15s" onmouseenter="this.style.opacity='.9'" onmouseleave="this.style.opacity='.55'">↻</button>
-        <button id="mode-btn" onclick="toggleModePopup(event)" title="Choose puzzle" aria-label="Choose puzzle" style="position:absolute;bottom:0;left:0;background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;opacity:0.7;transition:opacity .15s" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.7'"><span class="puzzle-emoji">🧩</span></button>
-        <div class="mode-popup" id="mode-popup" style="display:none">
-            <button class="mode-popup-item" data-mode="daily" onclick="setGameMode('daily')">Daily</button>
-            <button class="mode-popup-item" data-mode="mini" onclick="setGameMode('mini')">Mini</button>
+        <div id="mode-control" style="position:absolute;top:100%;left:0;margin-top:6px;z-index:60">
+            <button id="mode-btn" onclick="toggleModePopup(event)" title="Choose puzzle" aria-label="Choose puzzle" style="background:none;border:none;cursor:pointer;padding:2px 6px;font-size:1.45rem;line-height:1;opacity:0.8;transition:opacity .15s" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.8'"><span class="puzzle-emoji">🧩</span></button>
+            <div class="mode-popup" id="mode-popup" style="display:none">
+                <button class="mode-popup-item" data-mode="daily" onclick="setGameMode('daily')">Daily</button>
+                <button class="mode-popup-item" data-mode="mini" onclick="setGameMode('mini')">Mini</button>
+            </div>
         </div>
         <div class="board-container" id="board-container">
             <svg class="svg-overlay" id="svg-overlay"></svg>
