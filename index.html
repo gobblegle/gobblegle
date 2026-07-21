@@ -69,12 +69,9 @@
         }
         .header-title { display: flex; flex-direction: column; align-items: center; gap: 4px; }
         .header-title img { height: 38px; width: auto; display: block; }
-        /* Mini ("Giblet") mode: hide the wordmark and show the single combined logo, sized up. */
-        body.mini-mode #header-wordmark { display: none; }
-        body.mini-mode #header-mascot { height: 48px; }
         .header-subtitle { font-size: 0.95rem; font-weight: 700; color: var(--text); }
         /* Puzzle-piece (🧩) mode button + its Daily/Mini popup. */
-        #mode-btn .puzzle-emoji { display: inline-block; filter: sepia(1) saturate(6) hue-rotate(-18deg); }
+        #mode-btn .puzzle-emoji { display: inline-block; filter: sepia(1) saturate(4) hue-rotate(-18deg) brightness(0.68); }
         .mode-popup {
             position: absolute; left: 0; bottom: 100%; margin-bottom: 6px; z-index: 60;
             background: var(--surface); border: 1px solid var(--border);
@@ -784,7 +781,7 @@ let preloadedWords = null;    // pre-computed word list from Firebase (avoids fu
 let preloadedBonusWords = null; // pre-computed Linguist Bonus list from Firebase
 let gameWordSelections = new Set(); // excluded words loaded from Firebase
 let currentBoardDate = null; // YYYY-MM-DD if showing a daily board, null otherwise
-// Which daily track is active: 'daily' (the main puzzle) or 'mini' (the easier "Giblet").
+// Which daily track is active: 'daily' (the main puzzle) or 'mini' (the easier "Wattle").
 // The two tracks live in parallel Firebase trees and have fully separate saved progress
 // (getBoardHash namespaces every G2_* key by mode).
 let gameMode = 'daily';
@@ -801,9 +798,9 @@ let hintEvents = []; // [{type, t}] — solo per-hint timeline, drawn as distinc
 // Preloading + same-origin keeps the canvas untainted, so toDataURL()/native share still work.
 const shareGraphBgImg = new Image();
 shareGraphBgImg.src = 'graphbg.png';
-// Mini ("Giblet") share-chart backdrop — same same-origin + preloaded rules.
+// Mini ("Wattle") share-chart backdrop — same same-origin + preloaded rules.
 const shareGraphBgImgMini = new Image();
-shareGraphBgImgMini.src = 'giblethbg.png';
+shareGraphBgImgMini.src = 'daily wattlehbg.png';
 
 // Room state
 let roomMode = false, roomId = null, playerId = null;
@@ -1688,7 +1685,7 @@ async function loadDailyBoard(date) {
 
 // ── Daily / Mini mode switching ─────────────────────────────────────────────
 // The 🧩 button by the board opens a small popup to switch between the main
-// "Daily" puzzle and the easier "Mini" (Giblet). The two are fully separate
+// "Daily" puzzle and the easier "Mini" (Wattle). The two are fully separate
 // puzzles with independent saved progress (see getBoardHash).
 function toggleModePopup(e) {
     e?.stopPropagation();
@@ -1702,18 +1699,19 @@ function updateModePopupActive() {
         btn.classList.toggle('active', btn.dataset.mode === gameMode);
     });
 }
-// Swap the header logo: Daily shows the turkey mascot + wordmark; Mini shows the
-// single combined Giblet logo (gibletmain.png) with the wordmark hidden.
+// Swap the header logo: same two-image layout (mascot on the left, wordmark on the
+// right) for both tracks — Daily uses the turkey + Gobblegle wordmark; Mini ("Wattle")
+// uses the Daily Wattle mascot + "Daily Wattle Words" wordmark.
 function updateHeaderForMode() {
     const mascot = document.getElementById('header-mascot');
     const wordmark = document.getElementById('header-wordmark');
     if (!mascot) return;
     if (gameMode === 'mini') {
-        mascot.src = 'gibletmain.png';
-        if (wordmark) wordmark.style.display = 'none';
+        mascot.src = 'daily wattle.png';
+        if (wordmark) { wordmark.src = 'daily wattle words.png'; wordmark.style.display = ''; }
     } else {
         mascot.src = 'gobblegleturkey.png';
-        if (wordmark) wordmark.style.display = '';
+        if (wordmark) { wordmark.src = 'gobblegletitle.png'; wordmark.style.display = ''; }
     }
 }
 async function setGameMode(newMode) {
@@ -4076,8 +4074,9 @@ function shareGame() {
     const hintWords = ['Zero','One','Two','Three','Four'];
     const n = hintsUsed.size;
     const hintLine = `${hintWords[n] ?? n} hint${n === 1 ? '' : 's'} used`;
-    const headline = gameMode === 'mini' ? "🦃 I played Gobblegle's Daily Giblet! 🦃" : '🦃 I played Gobblegle! 🦃';
-    const text = `${headline}\n${dateStr}\nFound: ${foundWords.size}/${validWords.size}\nScore: ${score}\n${timeStr}\n${hintLine}\nhttps://gobblegle.com`;
+    const headline = gameMode === 'mini' ? '🦃 I played the Daily Wattle! 🦃' : '🦃 I played Gobblegle! 🦃';
+    const link = gameMode === 'mini' ? 'https://gobblegle.com/?mini' : 'https://gobblegle.com';
+    const text = `${headline}\n${dateStr}\nFound: ${foundWords.size}/${validWords.size}\nScore: ${score}\n${timeStr}\n${hintLine}\n${link}`;
     // Preview the shareable card: the text summary on top, the words + score chart
     // below. Rendered synchronously to a canvas — this avoids an iOS Safari
     // canvas.toBlob() callback hang that left mobile shares blank. null → text-only.

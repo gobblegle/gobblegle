@@ -1051,8 +1051,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (testMini) {
         const mascot = document.getElementById('header-mascot');
         const wordmark = document.getElementById('header-wordmark');
-        if (mascot) { mascot.src = 'gibletmain.png'; mascot.style.height = '48px'; }
-        if (wordmark) wordmark.style.display = 'none';
+        if (mascot) mascot.src = 'daily wattle.png';
+        if (wordmark) wordmark.src = 'daily wattle words.png';
     }
     await loadBoardConfig();
     await loadDictionary();
@@ -2233,8 +2233,9 @@ function shareGame() {
     const secs = parseInt(localStorage.getItem('G2_share_time') || timerSeconds || 0);
     const mm = String(Math.floor(secs / 60)).padStart(2, '0');
     const ss = String(secs % 60).padStart(2, '0');
-    const headline = testMini ? "🦃 I played Gobblegle's Daily Giblet! 🦃" : '🦃 I played Gobblegle! 🦃';
-    const text = `${headline}\nFound ${foundWords.size}/${validWords.size}\n${mm}:${ss}\nhttps://gobblegle.github.io/gobblegle/`;
+    const headline = testMini ? '🦃 I played the Daily Wattle! 🦃' : '🦃 I played Gobblegle! 🦃';
+    const link = testMini ? 'https://gobblegle.github.io/gobblegle/?mini' : 'https://gobblegle.github.io/gobblegle/';
+    const text = `${headline}\nFound ${foundWords.size}/${validWords.size}\n${mm}:${ss}\n${link}`;
     if (navigator.share) {
         navigator.share({ title: 'Gobblegle', text }).catch(() => {});
     } else {
