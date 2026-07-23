@@ -322,6 +322,7 @@
         .score-row { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 12px 16px; background: var(--surface); border-radius: 11px; }
         .score-row.gold { border: 2px solid var(--primary); background: var(--cell-active); }
         .score-name { font-weight: 700; font-size: 0.95rem; }
+        .score-crown { font-size: 0.9em; margin-left: 2px; }
         .score-gp   { font-weight: 800; color: var(--primary); font-size: 0.95rem; text-align: right; min-width: 48px; }
         .score-rnd  { color: var(--text-muted); font-weight: 600; font-size: 0.82rem; text-align: right; min-width: 52px; }
 
@@ -3704,19 +3705,31 @@ function renderScoreboard(data) {
         roundScore: p.rounds?.[round]?.score ?? null,
         roundWords: p.rounds?.[round]?.words || [],
         roundBonus: p.rounds?.[round]?.bonusWords || []
-    })).sort((a,b) => b.gamePoints-a.gamePoints || (b.roundScore||0)-(a.roundScore||0));
+    })).sort((a,b) =>
+        (a.roundScore===null)-(b.roundScore===null)   // players with no score yet ('…') sink to the bottom
+        || (b.roundScore||0)-(a.roundScore||0)        // then THIS round's score, highest first
+        || b.gamePoints-a.gamePoints                  // ties broken by total game points, then name,
+        || a.name.localeCompare(b.name));             // so the order is stable across re-renders
 
     document.getElementById('player-modal-overlay')?.remove();
 
     const sb = document.getElementById('scoreboard-body');
     sb.innerHTML = '';
 
-    const topPoints = entries[0]?.gamePoints || 0;
-    entries.forEach((e,i) => {
+    // Two separate marks, because they answer two different questions:
+    //   gold  = won THIS round (top round score)   — every player tied for it, not just row 0
+    //   crown = leading the GAME (most total pts)  — every player tied for it
+    // Both wait for pointsDone so they don't flip around while late round scores
+    // are still arriving. topPoints can't come from entries[0] any more — the list
+    // is now ordered by round score, so row 0 need not be the game leader.
+    const topRound  = Math.max(0, ...entries.map(e => e.roundScore || 0));
+    const topPoints = Math.max(0, ...entries.map(e => e.gamePoints));
+    entries.forEach(e => {
+        const wonRound   = pointsDone && topRound  > 0 && e.roundScore === topRound;
+        const gameLeader = pointsDone && topPoints > 0 && e.gamePoints === topPoints;
         const row=document.createElement('div');
-        // Gold every co-leader (tied for most points), not just the first row.
-        row.className='score-row'+(pointsDone && e.gamePoints>0 && e.gamePoints===topPoints?' gold':'');
-        row.innerHTML=`<span class="score-name">${e.name}</span>
+        row.className='score-row'+(wonRound?' gold':'');
+        row.innerHTML=`<span class="score-name">${e.name}${gameLeader?' <span class="score-crown" title="Game leader">👑</span>':''}</span>
             <span class="score-gp">${e.gamePoints} pt${e.gamePoints!==1?'s':''}</span>
             <span class="score-rnd">${e.roundScore!==null?'+'+e.roundScore:'…'}</span>`;
         row.onclick = () => openPlayerModal(e.name, e.roundWords, e.roundBonus);
