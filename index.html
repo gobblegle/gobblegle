@@ -421,6 +421,15 @@
             font-variant-numeric: tabular-nums;
         }
 
+        /* ── Calendar day status (Daily + Mini) ──
+           green = completed, orange = answers revealed, red = puzzle available but not done. */
+        .cal-day-done   { background:#dcfce7; color:#15803d; }
+        .cal-day-reveal { background:#ffedd5; color:#c2410c; }
+        .cal-day-todo   { background:#fee2e2; color:#dc2626; }
+        body.dark .cal-day-done   { background:rgba(22,163,74,0.24); color:#4ade80; }
+        body.dark .cal-day-reveal { background:rgba(234,88,12,0.26); color:#fb923c; }
+        body.dark .cal-day-todo   { background:rgba(220,38,38,0.26); color:#f87171; }
+
         /* ════ Tutorial mode (sandbox) ════ */
         #tutorial-overlay {
             position: fixed; left: 0; right: 0; bottom: 0; top: 0;
@@ -1608,10 +1617,18 @@ function renderCalendarMonth(monthDate, availDates) {
             const found = JSON.parse(localStorage.getItem(`G2_found_${hash}`) || '[]');
             const total = localStorage.getItem(`G2_total_${hash}`);
 
+            // Status colour: green = solved, orange = answers revealed, red = not done.
+            // Green wins over orange (you can only solve without revealing). Same rule
+            // for today and past days, and for both Daily and Mini (hash is mode-aware).
+            const completed = total && found.length >= Number(total);
+            const revealed  = localStorage.getItem(`G2_answers_${hash}`) === '1';
+            cell.classList.add(completed ? 'cal-day-done' : revealed ? 'cal-day-reveal' : 'cal-day-todo');
+
             cell.style.cursor = 'pointer';
-            cell.style.background = isActive ? 'var(--cell-border-active)' : 'var(--cell-active)';
-            cell.style.color = isActive ? '#fff' : 'var(--primary)';
-            if (isToday) cell.style.outline = '2px solid var(--primary)';
+            // The open puzzle gets an inner ring; today gets an outer ring — both can
+            // show at once without hiding the status colour underneath.
+            if (isActive) cell.style.boxShadow = 'inset 0 0 0 2px var(--primary)';
+            if (isToday) { cell.style.outline = '2px solid var(--primary)'; cell.style.outlineOffset = '1px'; }
 
             cell.appendChild(dayNum);
             if (found.length > 0 && total) {
@@ -2368,11 +2385,53 @@ function updateAnswerRevealSection() {
         const btn = document.createElement('button');
         btn.className = 'answer-reveal-btn';
         btn.textContent = '☑ Show Answers';
-        btn.onclick = revealAnswers;
+        btn.onclick = confirmRevealAnswers;
         sec.appendChild(btn);
     } else {
         renderAnswerList(sec);
     }
+}
+
+// "Show Answers" only ever appears on past puzzles, so revealing is always a
+// deliberate give-up — gate it behind a confirmation so a stray tap can't end
+// the puzzle. On confirm we run the same revealAnswers() as before.
+function confirmRevealAnswers() {
+    if (answersRevealed) return;
+    document.getElementById('reveal-confirm-overlay')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'reveal-confirm-overlay';
+    overlay.className = 'player-modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+
+    const modal = document.createElement('div');
+    modal.className = 'player-modal';
+    modal.style.maxWidth = '300px';
+    modal.onclick = e => e.stopPropagation();
+
+    const title = document.createElement('div');
+    title.className = 'player-modal-title';
+    title.textContent = 'Show answers?';
+
+    const msg = document.createElement('div');
+    msg.style.cssText = 'font-size:0.9rem;line-height:1.5;color:var(--text)';
+    msg.textContent = 'This reveals every word and ends the puzzle. You won’t be able to keep playing it.';
+
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+    const cancel = document.createElement('button');
+    cancel.className = 'btn btn-outline btn-sm';
+    cancel.textContent = 'Cancel';
+    cancel.onclick = () => overlay.remove();
+    const ok = document.createElement('button');
+    ok.className = 'btn btn-sm';
+    ok.textContent = 'Show Answers';
+    ok.onclick = () => { overlay.remove(); revealAnswers(); };
+    actions.append(cancel, ok);
+
+    modal.append(title, msg, actions);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
 }
 
 function revealAnswers() {
