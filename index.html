@@ -1863,32 +1863,57 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    // Dismissing the Found dialog must not also activate whatever is underneath
+    // it (notably "Show Answers", which sits directly below). Touch devices close
+    // it on touchstart so it gets out of the way immediately, which leaves the
+    // follow-up click landing on that button — so a dismissal marks the next
+    // click as spent and the capture-phase handler below swallows it before the
+    // target's own onclick runs. First tap closes; the user taps again if they
+    // really did mean to press the button.
+    let popupDismissedByTap = false;
     function closePopupIfOutside(target) {
         const popup = document.getElementById('word-popup');
-        if (popup.style.display !== 'none'
-            && !popup.contains(target)
-            && target !== document.getElementById('score-btn'))
-            popup.style.display = 'none';
+        if (popup.style.display === 'none'
+            || popup.contains(target)
+            || target === document.getElementById('score-btn')) return false;
+        popup.style.display = 'none';
+        return true;
     }
-    document.addEventListener('click', e => {
-        closePopupIfOutside(e.target);
+    function closeMenusIfOutside(target) {
         const menu = document.getElementById('room-menu');
         if (menu.style.display !== 'none'
-            && !menu.contains(e.target)
-            && e.target !== document.getElementById('start-room-btn'))
+            && !menu.contains(target)
+            && target !== document.getElementById('start-room-btn'))
             menu.style.display = 'none';
         const modePopup = document.getElementById('mode-popup');
         const modeBtn = document.getElementById('mode-btn');
         if (modePopup && modePopup.style.display !== 'none'
-            && !modePopup.contains(e.target)
-            && !(modeBtn && modeBtn.contains(e.target)))
+            && !modePopup.contains(target)
+            && !(modeBtn && modeBtn.contains(target)))
             modePopup.style.display = 'none';
         const burgerPanel = document.getElementById('burger-panel');
         if (burgerPanel.style.display !== 'none'
-            && e.target === burgerPanel)  // clicking the dark overlay (not the drawer itself)
+            && target === burgerPanel)  // clicking the dark overlay (not the drawer itself)
             closeBurgerMenu();
-    });
-    document.addEventListener('touchstart', e => { closePopupIfOutside(e.target); }, {passive: true});
+    }
+    document.addEventListener('click', e => {
+        if (closePopupIfOutside(e.target) || popupDismissedByTap) {
+            popupDismissedByTap = false;
+            // Swallowing the click skips the bubble-phase listener below, so run
+            // the same dismissals here — the other menus still close as usual.
+            closeMenusIfOutside(e.target);
+            e.stopPropagation();
+            e.preventDefault();
+        }
+    }, true);
+    document.addEventListener('click', e => { closeMenusIfOutside(e.target); });
+    document.addEventListener('touchstart', e => {
+        if (!closePopupIfOutside(e.target)) return;
+        popupDismissedByTap = true;
+        // Safety valve: if no click follows (a trace, a scroll, a cancelled tap),
+        // don't leave a stale latch that eats an unrelated click later on.
+        setTimeout(() => { popupDismissedByTap = false; }, 700);
+    }, {passive: true});
 
     window.addEventListener('popstate', () => {
         if (roomMode && !new URLSearchParams(location.search).get('room')) leaveRoom();
