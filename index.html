@@ -801,7 +801,16 @@ const FB_CONFIG = m => m === 'mini' ? 'boardConfigMini'     : 'boardConfig';
 const CFG_CACHE_KEY = () => gameMode === 'mini' ? MINI_CFG_CACHE_KEY : DAILY_CFG_CACHE_KEY;
 let answersRevealed = false;
 let isSelecting = false, currentPath = [];
+// The clock is DERIVED from wall-clock timestamps, never accumulated tick by tick:
+// timerBaseMs is the time banked before the current run, timerRunSince is when the
+// current run began (null while stopped). Counting ticks meant a duplicate interval
+// made the clock run at 2x/3x, and a throttled phone silently lost seconds. Deriving
+// it makes both harmless — every tick just recomputes the same correct value.
 let timerStarted = false, timerSeconds = 0, timerInterval = null, timerPaused = false;
+let timerBaseMs = 0, timerRunSince = null;
+// Opt-in tracing for timer state, for diagnosing this on a real handset:
+//   localStorage.setItem('G2_debug_timer','1')  then reload and watch the console.
+const TIMER_DEBUG = (() => { try { return localStorage.getItem('G2_debug_timer') === '1'; } catch { return false; } })();
 let wordEvents = []; // [{word, t}] — solo per-word timeline (t = timerSeconds at find), powers the share chart
 let hintEvents = []; // [{type, t}] — solo per-hint timeline, drawn as distinct x-axis ticks on the share chart
 // Preloaded, same-origin decorative backdrop drawn faintly behind the share chart's plot.
@@ -1463,6 +1472,7 @@ function loadCachedDailyConfig(date) {
 
 // ── Solo progress ──────────────────────────────────────────────────────────
 function saveProgress() {
+    syncTimerSeconds(); // persist the live clock, not whatever the last tick rendered
     const h = getBoardHash();
     const won = validWords.size > 0 && foundWords.size >= validWords.size;
     localStorage.setItem(`G2_found_${h}`, JSON.stringify([...foundWords]));
@@ -1494,17 +1504,27 @@ function loadProgress() {
     answersRevealed = localStorage.getItem(`G2_answers_${h}`) === '1';
     hintsUsed = new Set(safeLoadJSON(`G2_hints_used_${h}`, []));
     const saved = safeLoadJSON(`G2_timer_${h}`, {});
-    timerSeconds = Number(saved.s) || 0;
+    // Always tear down the previous board's ticker first. This function is reached from
+    // init, the daily calendar, a mode switch, the background board refresh and the room
+    // exit; the callers that did not clear first each leaked a live interval, and every
+    // leaked interval added another +1/sec to the very same clock.
+    stopTimerInterval();
+    timerStarted = false; timerPaused = false;
+    setTimerSeconds(saved.s);
     updateTimerDisplay();
     if (saved.started) {
         timerStarted = true;
-        if ((saved.paused && saved.won) || answersRevealed) {
+        // Restoring while backgrounded starts paused; the visible event (or the first
+        // interaction) resumes it, so a hidden tab can't bank time it never showed.
+        if ((saved.paused && saved.won) || answersRevealed || document.hidden) {
             timerPaused = true;
         } else {
             timerPaused = false;
-            timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
+            timerRunSince = Date.now();
+            startTimerInterval();
         }
     }
+    timerLog('loadProgress');
 }
 
 // ── Daily puzzle browser ────────────────────────────────────────────────────
@@ -1667,9 +1687,7 @@ async function loadDailyBoard(date) {
     if (currentBoardDate === date) return;
 
     saveProgress();
-    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-    timerStarted = false; timerPaused = false; timerSeconds = 0;
-    updateTimerDisplay();
+    resetTimer();
 
     if (!db) return;
     try {
@@ -1717,6 +1735,22 @@ function updateModePopupActive() {
         btn.classList.toggle('active', btn.dataset.mode === gameMode);
     });
 }
+// Rewrite the address bar without throwing away query params we don't own. Every call
+// site used to rebuild the URL from scratch (location.pathname + '?mini'), which
+// silently dropped everything else on the link: ?mini&tutorial=0 lost the tutorial
+// override before the walkthrough could read it, and a shared link's extra params
+// vanished on load. Pass null to remove a param, '' to set a valueless one.
+function updateUrlParams(edits) {
+    const params = new URLSearchParams(location.search);
+    for (const key of Object.keys(edits)) {
+        if (edits[key] === null) params.delete(key);
+        else params.set(key, edits[key]);
+    }
+    // Render valueless keys as bare "?mini" rather than "?mini=", matching the form
+    // used in shared links and in the ?mini check at init.
+    const qs = params.toString().replace(/(^|&)([^=&]+)=(?=&|$)/g, '$1$2');
+    history.replaceState({}, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+}
 // Swap the header logo: same two-image layout (mascot on the left, wordmark on the
 // right) for both tracks — Daily uses the turkey + Gobblegle wordmark; Mini ("Wattle")
 // uses the Daily Wattle mascot + "Daily Wattle Words" wordmark.
@@ -1732,6 +1766,15 @@ function updateHeaderForMode() {
         if (wordmark) { wordmark.src = 'gobblegletitle.png'; wordmark.style.display = ''; }
     }
 }
+// Mode switching is re-entrant: gameMode flips synchronously but the board fetch below
+// is awaited, so a second tap during that window starts a second switch. Two overlapping
+// runs each reached loadProgress() and each spawned a ticker. `modeSwitchToken` lets only
+// the newest run apply its result, and `modeSwitchChain` serializes them so an older
+// fetch can never land its board globals on top of a newer one's.
+let modeSwitchToken = 0;
+let modeSwitchChain = Promise.resolve();
+let modeSwitchInFlight = false;
+
 async function setGameMode(newMode) {
     if (roomMode) return;
     const popup = document.getElementById('mode-popup');
@@ -1739,35 +1782,62 @@ async function setGameMode(newMode) {
     if (newMode === gameMode) return;
 
     // Persist the OUTGOING board first (still under the old mode's correct hash),
-    // before any state is reset — otherwise its timer/found words are lost.
-    saveProgress();
-    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-    timerStarted = false; timerPaused = false; timerSeconds = 0;
-    updateTimerDisplay();
+    // before any state is reset — otherwise its timer/found words are lost. Skipped
+    // when a switch is already in flight: the in-memory state is half-swapped then,
+    // and saving it would write this mode's blank progress over the other track's.
+    if (!modeSwitchInFlight) saveProgress();
+    resetTimer();
 
     gameMode = newMode;
+    modeSwitchInFlight = true;
+    const myToken = ++modeSwitchToken;
     document.body.classList.toggle('mini-mode', newMode === 'mini');
     updateHeaderForMode();
     updateModePopupActive();
     try { localStorage.setItem('G2_gamemode', newMode); } catch {}
-    history.replaceState({}, '', newMode === 'mini' ? location.pathname + '?mini' : location.pathname);
+    updateUrlParams({ mini: newMode === 'mini' ? '' : null });
 
-    // Load today's board for the new mode (mode-aware, with the full offline fallback
-    // chain). loadProgress() then restores this mode's own saved progress via the hash.
-    await loadBoardConfig();
-    if (!preloadedWords && !dictionary.size) await loadDictionary();
-    loadProgress();
-    calculateValidWords();
-    if (currentBoardDate) localStorage.setItem(`G2_total_${getBoardHash()}`, validWords.size);
-    renderBoard();
-    clearPathUI();
-    updateScoreUI();
-    updateTileHints();
-    updateAnswerRevealSection();
+    // Paint the new track from its local cache immediately when we have one. The fetch
+    // below can take seconds on a phone, and leaving the previous mode's board on screen
+    // made the tap look dead — which is exactly what invites the second tap.
+    if (loadCachedDailyConfig(getPuzzleDate()) && preloadedWords) {
+        loadProgress();
+        calculateValidWords();
+        renderBoard();
+        clearPathUI();
+        updateScoreUI();
+        updateTileHints();
+        updateAnswerRevealSection();
+    }
 
-    // If the Puzzles drawer is open, re-render it for the newly active set.
-    const panel = document.getElementById('burger-panel');
-    if (panel && panel.style.display !== 'none') renderCalendar();
+    const previousSwitch = modeSwitchChain;
+    modeSwitchChain = (async () => {
+        try { await previousSwitch; } catch {}
+        try {
+            // Load today's board for the new mode (mode-aware, with the full offline
+            // fallback chain). loadProgress() then restores this mode's own saved
+            // progress via the hash.
+            await loadBoardConfig();
+            if (myToken !== modeSwitchToken) return;   // superseded by a later switch
+            if (!preloadedWords && !dictionary.size) await loadDictionary();
+            if (myToken !== modeSwitchToken) return;
+            loadProgress();
+            calculateValidWords();
+            if (currentBoardDate) localStorage.setItem(`G2_total_${getBoardHash()}`, validWords.size);
+            renderBoard();
+            clearPathUI();
+            updateScoreUI();
+            updateTileHints();
+            updateAnswerRevealSection();
+
+            // If the Puzzles drawer is open, re-render it for the newly active set.
+            const panel = document.getElementById('burger-panel');
+            if (panel && panel.style.display !== 'none') renderCalendar();
+        } finally {
+            if (myToken === modeSwitchToken) modeSwitchInFlight = false;
+        }
+    })();
+    return modeSwitchChain;
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
@@ -1782,7 +1852,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         await loadDictionary();
         if (!db) {
             alert('Rooms require Firebase setup. See the REPLACE_ME fields in index.html.');
-            history.replaceState({}, '', location.pathname);
+            updateUrlParams({ room: null });   // drop the room, keep the rest of the link
         } else {
             await initRoomMode(rid);
             return;
@@ -1798,7 +1868,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     document.body.classList.toggle('mini-mode', gameMode === 'mini');
     updateHeaderForMode();
     updateModePopupActive();
-    if (gameMode === 'mini') history.replaceState({}, '', location.pathname + '?mini');
+    updateUrlParams({ mini: gameMode === 'mini' ? '' : null });
 
     // Solo mode — fast path: if today's board is already cached locally (with its
     // word list), render it instantly with NO overlay and NO network. Only show the
@@ -2245,26 +2315,102 @@ function clearPathUI() {
 }
 
 // ── Solo timer ─────────────────────────────────────────────────────────────
+// Every entry point funnels through startTimerInterval(), which clears any existing
+// ticker first — a stray second interval used to be the whole difference between a 1x
+// and a 3x clock. The tick only re-derives the display from timestamps, so even if a
+// duplicate ever did slip through it would be a no-op rather than a double increment.
+function timerLog(what) {
+    if (!TIMER_DEBUG) return;
+    console.log(`[timer] ${what}`, { started: timerStarted, paused: timerPaused,
+        seconds: timerSeconds, ticking: !!timerInterval, hidden: document.hidden, mode: gameMode });
+}
+// Ceiling on how much any single accrual may credit. Ticks land every 250ms, so a gap
+// this large means the phone froze us or the visibilitychange→hidden never arrived —
+// events drop in both directions. Without the ceiling, backgrounding the app for ten
+// minutes with the pause event lost would credit all ten minutes on the next tick.
+// (Squaredle's PageTimer clamps the same way, at the same 5s.)
+const TIMER_MAX_TICK_MS = 5000;
+
+// Fold the time since the last accrual into timerBaseMs and re-anchor. Re-anchoring on
+// EVERY accrual is what makes a stray duplicate ticker harmless: the second one to fire
+// finds ~0ms outstanding and adds nothing, instead of adding a second full second.
+// Sub-second remainders live in timerBaseMs, so repeated pause/resume can't shave time.
+function syncTimerSeconds() {
+    // Truthiness, not `!== null`: a stray undefined here would turn the clock into NaN.
+    if (timerRunSince) {
+        const now = Date.now();
+        let delta = now - timerRunSince;
+        if (!(delta > 0)) delta = 0;                            // clock stepped backwards
+        else if (delta > TIMER_MAX_TICK_MS) delta = TIMER_MAX_TICK_MS;
+        timerBaseMs += delta;
+        timerRunSince = now;
+    }
+    timerSeconds = Math.max(0, Math.floor(timerBaseMs / 1000));
+    return timerSeconds;
+}
+function bankTimerElapsed() {
+    syncTimerSeconds();
+    timerRunSince = null;
+}
+function setTimerSeconds(s) {
+    timerBaseMs = (Number(s) || 0) * 1000;
+    timerRunSince = null;
+    timerSeconds = Math.max(0, Math.floor(timerBaseMs / 1000));
+}
+function timerTick() {
+    const prev = timerSeconds;
+    syncTimerSeconds();
+    if (timerSeconds === prev) return;
+    updateTimerDisplay();
+    // Autosave on each 15s boundary crossed. A single tick can span several seconds if
+    // the phone throttled us, so testing `% 15` alone would skip the save altogether.
+    if (Math.floor(timerSeconds / 15) !== Math.floor(prev / 15)) saveProgress();
+}
+function startTimerInterval() {
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(timerTick, 250);
+}
+function stopTimerInterval() {
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
 function startTimer() {
-    if (timerStarted) return;
+    // Already going? Treat the interaction as a resume request instead — see the
+    // recovery listeners below for how a live game ends up holding a paused clock.
+    if (timerStarted) { resumeTimer(); return; }
     timerStarted = true;
     timerPaused = false;
-    timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
+    timerRunSince = Date.now();
+    startTimerInterval();
+    timerLog('start');
 }
 function pauseTimer() {
     if (!timerStarted || timerPaused) return;
     timerPaused = true;
-    clearInterval(timerInterval);
-    timerInterval = null;
+    bankTimerElapsed();
+    stopTimerInterval();
+    updateTimerDisplay();
     saveProgress();
+    timerLog('pause');
 }
 function resumeTimer() {
     if (!timerStarted || !timerPaused) return;
+    if (roomMode) return;          // versus runs its own clock; the solo ticker must stay
+                                   // down so its autosave can't write under the wrong hash
+    if (document.hidden) return;
+    if (answersRevealed) return;   // board is over — the clock stays where it stopped
     if (!roomMode && validWords.size > 0 && foundWords.size >= validWords.size) return;
     timerPaused = false;
-    timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); if(timerSeconds%15===0) saveProgress(); }, 1000);
+    timerRunSince = Date.now();
+    startTimerInterval();
+    timerLog('resume');
 }
-function resetTimer() { clearInterval(timerInterval); timerInterval=null; timerStarted=false; timerPaused=false; timerSeconds=0; updateTimerDisplay(); }
+function resetTimer() {
+    stopTimerInterval();
+    timerStarted = false; timerPaused = false;
+    setTimerSeconds(0);
+    updateTimerDisplay();
+    timerLog('reset');
+}
 document.addEventListener('visibilitychange', () => {
     if (roomMode) {
         // While I'm actively playing a round the room overlay is hidden — don't touch
@@ -2281,6 +2427,14 @@ document.addEventListener('visibilitychange', () => {
     }
     if (document.hidden) pauseTimer(); else resumeTimer();
 });
+// Belt and braces. Android Chrome does not reliably deliver the *visible* half of that
+// pair (tab switcher, notification shade, split screen, bfcache restore), and nothing
+// else in the app clears timerPaused — so one missed event stranded the clock for the
+// rest of the session while the board stayed fully playable. Swiping, tapping or typing
+// now re-checks; resumeTimer's own guards keep a won or answers-revealed board stopped.
+['pointerdown', 'touchstart', 'keydown'].forEach(ev =>
+    document.addEventListener(ev, () => { if (timerPaused) resumeTimer(); }, { capture: true, passive: true }));
+window.addEventListener('pageshow', () => { if (timerPaused) resumeTimer(); });
 // Format seconds as MM:SS, or HH:MM:SS once it reaches an hour.
 function formatTime(totalSeconds) {
     const h = Math.floor(totalSeconds / 3600);
@@ -2462,8 +2616,8 @@ function confirmRevealAnswers() {
 function revealAnswers() {
     if (answersRevealed) return;
     answersRevealed = true;
-    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-    timerPaused = true;
+    if (timerStarted) pauseTimer();                       // banks elapsed time, stops the ticker
+    else { stopTimerInterval(); timerPaused = true; }
     saveProgress();
     updateAnswerRevealSection();
 }
@@ -2984,7 +3138,7 @@ async function initRoomMode(rid) {
     const snap = await roomRef.once('value');
     if (!snap.exists()) {
         alert('Room not found.');
-        history.replaceState({}, '', location.pathname);
+        updateUrlParams({ room: null });   // reload lands on solo, keeping ?mini if set
         location.reload();
         return;
     }
@@ -3972,7 +4126,8 @@ async function leaveRoom() {
     roomPlayingInitialized=false; scoreBoardShown=false; roomScoreSubmitted=false;
     roomLastPlayedRound=-1; roomScoreboardClosedRound=-1;
 
-    history.replaceState({}, '', location.pathname);
+    // Leaving a room returns to whichever solo track was active, so say so in the URL.
+    updateUrlParams({ room: null, mini: gameMode === 'mini' ? '' : null });
 
     // Restore solo UI
     document.getElementById('room-overlay').classList.remove('visible');
