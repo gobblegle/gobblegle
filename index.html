@@ -130,18 +130,24 @@
         }
         .score-btn:hover { background: var(--cell-border-active); color: #fff; }
         .word-popup {
-            /* Centered modal dialog. The huge first box-shadow ring dims the page
-               behind it (no separate backdrop element needed); clicking that dimmed
-               area counts as "outside" and closes the popup via the global handler. */
-            /* Sits a little above centre (48%) and capped a touch shorter (80vh)
-               so there's always an empty strip below the dialog to tap/click out. */
-            position: fixed; top: 48%; left: 50%; transform: translate(-50%, -50%);
+            /* Modal dialog. The huge first box-shadow ring dims the page behind it
+               (no separate backdrop element needed); clicking that dimmed area
+               counts as "outside" and closes the popup via the global handler. */
+            /* top / max-height below are only the fallback for the frame before
+               positionPopup() runs — it rewrites both on every open and re-render
+               so the dialog hangs under the Found button (never over it) with a
+               tap-out strip left below, measured against the *visible* viewport. */
+            position: fixed; top: 104px; left: 50%; transform: translateX(-50%);
             background: var(--surface); border: 1px solid var(--border);
             border-radius: 14px; padding: 16px 18px;
             box-shadow: 0 0 0 100vmax rgba(0,0,0,0.45), 0 18px 50px rgba(0,0,0,0.35);
-            width: min(460px, 92vw); max-height: 80vh;
+            width: min(460px, 92vw); max-height: 70dvh;
             display: flex; flex-direction: column; z-index: 60;
         }
+        /* The page behind the dialog must not scroll: a scrolled page slides the
+           Found button out from under the dialog's anchor, and on a short screen
+           that can strand the user with nothing tappable to close it. */
+        body.popup-open { position: fixed; left: 0; right: 0; width: 100%; }
         .popup-section { border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 4px; }
         .popup-section:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
         .popup-reset {
@@ -1946,7 +1952,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (popup.style.display === 'none'
             || popup.contains(target)
             || target === document.getElementById('score-btn')) return false;
-        popup.style.display = 'none';
+        closeWordPopup();
         return true;
     }
     function closeMenusIfOutside(target) {
@@ -2172,6 +2178,10 @@ function setupPointerListeners() {
 
 function startSelection(r, c) {
     if (answersRevealed) return;
+    // The tap-out strip below the Found dialog usually sits over the board. A
+    // press there is a dismissal — the global handlers close the dialog on it —
+    // so it must not also start tracing a word underneath.
+    if (document.getElementById('word-popup').style.display !== 'none') return;
     isSelecting = true;
     currentPath = [{r,c}];
     if (!roomMode) startTimer();
@@ -2691,15 +2701,71 @@ let hintsUsed = new Set();
 function togglePopup(e) {
     e.stopPropagation();
     const popup = document.getElementById('word-popup');
-    if (popup.style.display !== 'none') { popup.style.display='none'; return; }
+    if (popup.style.display !== 'none') { closeWordPopup(); return; }
     hintScreen = null; // always open on the normal Found view
+    // Freeze the page *before* measuring: positionPopup() anchors off the Found
+    // button's on-screen position, which only holds while the page can't move.
+    lockPageScroll();
     // Show first, then render: restoring the saved scroll only sticks once the
     // dialog is visible (a display:none element can't be scrolled).
     popup.style.display='flex';
     renderPopup();
 }
 
+// ── Found dialog: scroll lock, placement, and the one true close ───────────
+// There are always two ways out: press the Found button again, or tap any bare
+// page outside the dialog. So the button must never end up underneath the
+// dialog, and there must always be a real, on-screen strip of page left to tap
+// — above the dialog and below it. Both are enforced by positionPopup().
+let pageScrollLockY = 0;
+function lockPageScroll() {
+    if (document.body.classList.contains('popup-open')) return;
+    pageScrollLockY = window.scrollY || document.documentElement.scrollTop || 0;
+    document.body.style.top = `-${pageScrollLockY}px`;
+    document.body.classList.add('popup-open');
+}
+function unlockPageScroll() {
+    if (!document.body.classList.contains('popup-open')) return;
+    document.body.classList.remove('popup-open');
+    document.body.style.top = '';
+    window.scrollTo(0, pageScrollLockY);
+}
+
+// Every path that hides the dialog goes through here, so none of them can leave
+// the page scroll-locked behind a dialog that is no longer on screen.
+function closeWordPopup() {
+    const popup = document.getElementById('word-popup');
+    if (popup) popup.style.display = 'none';
+    unlockPageScroll();
+}
+
+// Measured against the visual viewport, never vh: on Android Chrome 100vh is the
+// height with the URL bar *hidden*, so a vh-sized dialog overflows both ends of
+// the screen it is actually on — covering the Found button at the top and
+// pushing the tap-out strip off the bottom, leaving no way to close it at all.
+const POPUP_GAP_TOP = 8;      // breathing room under the Found button
+const POPUP_GAP_BOTTOM = 64;  // guaranteed tap-out strip below the dialog
+function positionPopup() {
+    const popup = document.getElementById('word-popup');
+    if (!popup || popup.style.display === 'none') return;
+    const btn = document.getElementById('score-btn');
+    const vh  = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    const top = (btn ? btn.getBoundingClientRect().bottom : 96) + POPUP_GAP_TOP;
+    const gap = Math.max(POPUP_GAP_BOTTOM, vh * 0.12);
+    popup.style.top = `${Math.round(top)}px`;
+    popup.style.maxHeight = `${Math.max(120, Math.round(vh - top - gap))}px`;
+}
+window.addEventListener('resize', positionPopup);
+window.addEventListener('orientationchange', positionPopup);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', positionPopup);
+
 function renderPopup() {
+    renderPopupContent();
+    // The dialog's height changes with the view (word list / hints / reveal), so
+    // re-anchor after each render to keep both tap-out strips honest.
+    positionPopup();
+}
+function renderPopupContent() {
     const popup = document.getElementById('word-popup');
     popup.innerHTML='';
 
@@ -2885,7 +2951,7 @@ function revealHintWord(len) {
     requestAnimationFrame(() => { preview.style.opacity = '0.5'; });
 
     hintScreen = null;
-    document.getElementById('word-popup').style.display='none';
+    closeWordPopup();
 }
 
 // Placeholder string for an unfound word under a list hint:
@@ -3057,8 +3123,7 @@ function resetProgress() {
     updateScoreUI();
     clearPathUI();
     updateAnswerRevealSection();
-    const popup = document.getElementById('word-popup');
-    if (popup) popup.style.display = 'none';
+    closeWordPopup();
     updateTileHints();
 }
 
