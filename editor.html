@@ -111,6 +111,8 @@
             background: var(--bg); color: var(--text); outline: none;
         }
         .editor-table input.exhausted { color: var(--exhausted-text); border-color: var(--exhausted-border); }
+        /* "-" = blocked tile: saved as a gap; Board Builder / Fill Random skip it */
+        .editor-table input.blocked { color: var(--text-muted); background: transparent; border-style: dashed; font-weight: 400; }
         .editor-table input:focus { border-color: var(--primary); background: var(--cell-active); }
 
         .actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
@@ -213,9 +215,49 @@
         /* Blue ✕ remove button for the customize-puzzle list */
         .ws-btn-blue { border-color: #bfdbfe; color: #bfdbfe; }
         .ws-btn-blue.active { border-color: #2563eb; background: #2563eb; color: #fff; }
+
+        /* ── Sign-in gate ──
+           The editor stays hidden until an approved account signs in. The real
+           lock is the database rules (database.rules.json); this just keeps
+           unapproved visitors on the sign-in screen. */
+        body:not(.ed-unlocked) .page { display: none; }
+        body.ed-unlocked #auth-gate { display: none; }
+        #auth-gate { width: 100%; max-width: 420px; padding: 32px 16px; }
+        .auth-view { display: none; flex-direction: column; gap: 12px; }
+        .auth-view.active { display: flex; }
+        .auth-title { font-size: 1.15rem; font-weight: 700; color: var(--text); }
+        .auth-sub { font-size: 0.86rem; color: var(--text-muted); line-height: 1.5; }
+        .auth-sub b, .acct-email { color: var(--text); overflow-wrap: anywhere; }
+        .auth-links {
+            display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+            font-size: 0.84rem;
+        }
+        .link-btn {
+            background: none; border: none; padding: 0; cursor: pointer;
+            color: var(--primary); font: inherit; font-weight: 600; text-decoration: underline;
+        }
+        .btn-sm { padding: 5px 12px; font-size: 0.8rem; }
+        #acct-bar {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 8px; flex-wrap: wrap; font-size: 0.82rem; color: var(--text-muted);
+            margin-bottom: -6px;
+        }
+        #acct-bar .acct-actions { display: flex; gap: 6px; }
+        /* Approved-editors list (owner only) */
+        #editors-input { text-transform: none; }
+        .ed-email { flex: 1; font-size: 0.88rem; font-weight: 600; overflow-wrap: anywhere; }
+        .ed-owner-badge {
+            font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
+            letter-spacing: 0.05em; color: var(--primary);
+            border: 1px solid var(--cell-border-active); border-radius: 4px;
+            padding: 1px 5px; margin-left: 6px;
+        }
+        .ed-empty { padding: 14px 18px; font-size: 0.84rem; color: var(--text-muted); }
+        #editors-msg { margin: 10px 18px 0; }
     </style>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 </head>
 <body>
 <script>
@@ -232,7 +274,93 @@
     <button class="theme-toggle" id="theme-toggle-btn" onclick="toggleDarkMode()" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
 </header>
 
+<!-- Sign-in gate: shown until an approved account is signed in -->
+<div id="auth-gate">
+    <div class="card">
+        <div id="auth-loading" class="auth-view active">
+            <div class="auth-sub">Checking sign-in…</div>
+        </div>
+
+        <form id="auth-signin" class="auth-view" onsubmit="edSignIn(event)">
+            <div class="auth-title">Editor sign-in</div>
+            <div class="auth-sub">Only approved people can use the board editor.</div>
+            <div>
+                <label class="field-label" for="si-email">Email</label>
+                <input id="si-email" class="field-input" type="email" autocomplete="username" required>
+            </div>
+            <div>
+                <label class="field-label" for="si-pass">Password</label>
+                <input id="si-pass" class="field-input" type="password" autocomplete="current-password" required>
+            </div>
+            <button class="btn" type="submit" id="si-btn">Sign in</button>
+            <div class="auth-links">
+                <button type="button" class="link-btn" onclick="edShowAuth('signup')">Create an account</button>
+                <button type="button" class="link-btn" onclick="edForgotPassword()">Forgot password?</button>
+            </div>
+        </form>
+
+        <form id="auth-signup" class="auth-view" onsubmit="edSignUp(event)">
+            <div class="auth-title">Create an account</div>
+            <div class="auth-sub">Use the email address the owner approved. We'll send you a link to confirm it's yours.</div>
+            <div>
+                <label class="field-label" for="su-email">Email</label>
+                <input id="su-email" class="field-input" type="email" autocomplete="username" required>
+            </div>
+            <div>
+                <label class="field-label" for="su-pass">Password (at least 8 characters)</label>
+                <input id="su-pass" class="field-input" type="password" autocomplete="new-password" minlength="8" required>
+            </div>
+            <div>
+                <label class="field-label" for="su-pass2">Type the password again</label>
+                <input id="su-pass2" class="field-input" type="password" autocomplete="new-password" minlength="8" required>
+            </div>
+            <button class="btn" type="submit" id="su-btn">Create account</button>
+            <div class="auth-links">
+                <button type="button" class="link-btn" onclick="edShowAuth('signin')">Back to sign in</button>
+            </div>
+        </form>
+
+        <div id="auth-verify" class="auth-view">
+            <div class="auth-title">Confirm your email</div>
+            <div class="auth-sub">We sent a link to <b class="auth-email"></b>. Click it, then come back here and tap the button below. If you don't see it, check your spam folder.</div>
+            <button class="btn" type="button" id="verify-btn" onclick="edCheckVerified()">I've confirmed it</button>
+            <div class="auth-links">
+                <button type="button" class="link-btn" onclick="edResendVerification()">Send the email again</button>
+                <button type="button" class="link-btn" onclick="edSignOut()">Sign out</button>
+            </div>
+        </div>
+
+        <div id="auth-claim" class="auth-view">
+            <div class="auth-title">Set up the owner</div>
+            <div class="auth-sub">No owner has been set up yet. The owner is the only person who can add or remove editors. You're signed in as <b class="auth-email"></b>.</div>
+            <button class="btn" type="button" id="claim-btn" onclick="edClaimOwner()">Make me the owner</button>
+            <div class="auth-links">
+                <button type="button" class="link-btn" onclick="edSignOut()">Sign out</button>
+            </div>
+        </div>
+
+        <div id="auth-denied" class="auth-view">
+            <div class="auth-title">Not approved yet</div>
+            <div class="auth-sub">You're signed in as <b class="auth-email"></b>, but that email isn't on the approved list. Ask the owner to add it, then tap Check again.</div>
+            <button class="btn" type="button" id="denied-btn" onclick="edRecheck()">Check again</button>
+            <div class="auth-links">
+                <button type="button" class="link-btn" onclick="edSignOut()">Sign out</button>
+            </div>
+        </div>
+
+        <div class="status" id="auth-msg" style="margin-top:12px"></div>
+    </div>
+</div>
+
 <div class="page">
+
+    <div id="acct-bar">
+        <span>Signed in as <span class="acct-email" id="acct-email"></span></span>
+        <span class="acct-actions">
+            <button class="btn btn-sec btn-sm" id="editors-btn" style="display:none" onclick="openEditors()">👥 Editors</button>
+            <button class="btn btn-sec btn-sm" onclick="edSignOut()">Sign out</button>
+        </span>
+    </div>
 
     <div class="card">
         <div class="card-title">Grid</div>
@@ -250,7 +378,7 @@
                 <button class="dim-btn" onclick="adjustDim('cols',1)">+</button>
             </div>
         </div>
-        <div class="hint">Leave cells blank to create gaps. All letter cells must be connected (including diagonals).</div>
+        <div class="hint">Leave cells blank to create gaps. Type <b>-</b> in a cell to block it: it's saved as a gap, and New Word, Mixup and Fill Random never put a letter there. All letter cells must be connected (including diagonals).</div>
         <div class="table-wrap">
             <table class="editor-table" id="editor-table"></table>
         </div>
@@ -261,6 +389,25 @@
             </label>
         </div>
         <div class="status" id="status"></div>
+        <!-- Board Builder: one long "big word" packed compactly, rest filled to a word-count range -->
+        <div id="bb-box" style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px">
+            <div style="font-size:0.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.07em">
+                Board Builder <span id="bb-track" style="text-transform:none;letter-spacing:0;font-weight:600">· Regular</span>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
+                <label style="display:flex;flex-direction:column;gap:3px;font-size:0.78rem;font-weight:600;color:var(--text-muted)">
+                    Big word length
+                    <input type="text" id="bb-len" class="field-input" style="width:100px;padding:7px 9px" autocomplete="off" spellcheck="false" placeholder="9+" onchange="bbSaveSettings()">
+                </label>
+                <label style="display:flex;flex-direction:column;gap:3px;font-size:0.78rem;font-weight:600;color:var(--text-muted)">
+                    Word count
+                    <input type="text" id="bb-count" class="field-input" style="width:100px;padding:7px 9px" autocomplete="off" spellcheck="false" placeholder="35-60" onchange="bbSaveSettings()">
+                </label>
+                <button class="btn" id="bb-new-btn" onclick="bbNewWord()">New Word</button>
+                <button class="btn btn-sec" id="bb-mix-btn" onclick="bbMixup()" title="Same big word, new layout on the current grid size">Mixup</button>
+            </div>
+            <div id="bb-seed" style="font-size:0.82rem;color:var(--text-muted)">Big word: none</div>
+        </div>
         <div class="actions">
             <button class="btn btn-sec" onclick="generateRandom()">Generate Random</button>
             <button class="btn btn-sec" onclick="fillRandom()">Fill Random</button>
@@ -368,6 +515,28 @@
     </div>
 </div>
 
+<!-- Approved editors modal (owner only) -->
+<div id="editors-modal" class="ws-modal-shell">
+    <div class="ws-panel">
+        <div class="ws-header">
+            <span>Approved Editors</span>
+            <button class="btn btn-sec" style="padding:4px 10px;font-size:0.82rem" onclick="closeEditors()">✕</button>
+        </div>
+        <div class="ws-body" id="editors-body"></div>
+        <div class="status" id="editors-msg"></div>
+        <div class="ws-add">
+            <input type="email" id="editors-input" class="field-input" placeholder="Add someone's email…"
+                   autocomplete="off" spellcheck="false"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();edAddEditor();}">
+            <button class="btn" id="editors-add-btn" style="padding:9px 16px" onclick="edAddEditor()">Add</button>
+        </div>
+        <div class="ws-footer">
+            <span class="ws-footer-note">People you add create their own account on this page with that email.</span>
+            <button class="btn" onclick="closeEditors()">Done</button>
+        </div>
+    </div>
+</div>
+
 <script>
 let editorRows = 5, editorCols = 5;
 
@@ -394,10 +563,12 @@ const firebaseConfig = {
     messagingSenderId: "84213433658",
     appId: "1:84213433658:web:43cff77a4b1f48049ded01"
 };
-let db = null;
-try { firebase.initializeApp(firebaseConfig); db = firebase.database(); } catch(e) {}
+let db = null, auth = null;
+try { firebase.initializeApp(firebaseConfig); db = firebase.database(); auth = firebase.auth(); } catch(e) {}
 
-window.addEventListener('DOMContentLoaded', async () => {
+// Loads the editor's data (word lists, calendar, today's board). Runs ONCE,
+// only after an approved account has signed in — see the sign-in gate below.
+async function edStartEditor() {
     await loadWordSelections();
     await loadWordApprovals();
     // Awaited (was fire-and-forget) so edAvailDates is populated before we decide
@@ -431,7 +602,369 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     } catch {}
     buildEditorTable(false, null);
-});
+}
+
+// ── Sign-in gate ───────────────────────────────────────────────────────────
+// Firebase email + password sign-in. The REAL lock is the database rules
+// (database.rules.json, pasted into the Firebase console): only accounts whose
+// email is confirmed AND is either on the approved list (editors/) or is the one
+// owner (editorOwner) can change boards or word lists. This code mirrors those
+// rules so unapproved visitors get a sign-in screen instead of the editor.
+let edUser = null;        // signed-in Firebase user (or null)
+let edIsOwner = false;    // owner = the only one who can add/remove editors
+let edStarted = false;    // edStartEditor() has run
+let edAuthView = 'loading';
+let edRouteSeq = 0;       // ignores stale results if edRoute is re-entered
+
+// Database keys can't contain '.', so emails are stored with dots → commas.
+// MUST match the rules' auth.token.email.toLowerCase().replace('.', ',').
+function edEmailKey(email) {
+    return String(email || '').trim().toLowerCase().replace(/\./g, ',');
+}
+
+function edShowAuth(view) {
+    if (view !== edAuthView) edAuthMsg('');
+    // Carry a typed email across sign-in ⇄ create-account.
+    const si = document.getElementById('si-email'), su = document.getElementById('su-email');
+    if (view === 'signup' && !su.value) su.value = si.value;
+    if (view === 'signin' && !si.value) si.value = su.value;
+    edAuthView = view;
+    for (const v of ['loading', 'signin', 'signup', 'verify', 'claim', 'denied'])
+        document.getElementById('auth-' + v).classList.toggle('active', v === view);
+    document.querySelectorAll('.auth-email').forEach(el => el.textContent = edUser?.email || '');
+}
+
+function edAuthMsg(text, type = 'err') {
+    const el = document.getElementById('auth-msg');
+    el.textContent = text || '';
+    el.className = text ? `status ${type}` : 'status';
+}
+
+function edAuthErrorText(e) {
+    switch (e?.code) {
+        case 'auth/invalid-credential':
+        case 'auth/invalid-login-credentials':
+        case 'auth/wrong-password':
+        case 'auth/user-not-found':
+            return 'That email and password don\'t match. Try again, or tap "Forgot password?".';
+        case 'auth/invalid-email':          return "That doesn't look like an email address.";
+        case 'auth/missing-password':       return 'Type your password.';
+        case 'auth/email-already-in-use':   return 'There\'s already an account with that email. Go back and sign in instead (or use "Forgot password?").';
+        case 'auth/weak-password':          return 'Pick a stronger password (at least 8 characters).';
+        case 'auth/too-many-requests':      return 'Too many tries. Wait a few minutes, then try again.';
+        case 'auth/network-request-failed': return 'No internet connection. Check your connection and try again.';
+        case 'auth/operation-not-allowed':  return "Email sign-in isn't switched on in Firebase yet (setup step 1).";
+        case 'auth/user-disabled':          return 'This account has been turned off.';
+        default:                            return `Something went wrong: ${e?.message || e}`;
+    }
+}
+
+function _edIsDenied(e) {
+    return /permission[_ ]denied/i.test(`${e?.code || ''} ${e?.message || ''}`);
+}
+
+// once('value') with a time limit, so a dead connection can't leave the
+// page stuck on "Checking sign-in…" forever.
+function _edRead(path) {
+    return Promise.race([
+        db.ref(path).once('value'),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000)),
+    ]);
+}
+
+// Decides which screen to show for the current user, and opens the editor
+// only for the owner or an approved editor with a confirmed email.
+async function edRoute(user) {
+    const seq = ++edRouteSeq;
+    const stale = () => seq !== edRouteSeq;
+    edUser = user;
+    if (!user) {
+        if (edStarted) { location.reload(); return; } // signed out while editing → back to the lock screen
+        edShowAuth('signin');
+        return;
+    }
+    if (!user.emailVerified) {
+        try { await user.reload(); } catch {}
+        if (stale()) return;
+    }
+    if (!user.emailVerified) { edShowAuth('verify'); return; }
+
+    edShowAuth('loading');
+    try {
+        // The database checks the "email confirmed" stamp on the sign-in token.
+        // A token issued before the confirmation click doesn't have it yet.
+        const tok = await user.getIdTokenResult();
+        if (!tok.claims.email_verified) await user.getIdToken(true);
+    } catch {}
+    if (stale()) return;
+    if (!db) {
+        edShowAuth('denied');
+        edAuthMsg("Couldn't connect to the database. Check your connection and reload the page.");
+        return;
+    }
+
+    const key = edEmailKey(user.email);
+    let owner = null, ownerHidden = false, onList = false;
+    try {
+        try { owner = (await _edRead('editorOwner')).val(); }
+        catch (e) { if (_edIsDenied(e)) ownerHidden = true; else throw e; } // hidden = someone else owns it
+        try { onList = (await _edRead(`editors/${key}`)).exists(); }
+        catch (e) {
+            if (!_edIsDenied(e)) throw e;
+            // The rules let every signed-in, confirmed account read its OWN
+            // entry, so a refusal here means the new rules aren't installed yet.
+            if (stale()) return;
+            edShowAuth('denied');
+            edAuthMsg("The database lock isn't installed yet. Paste the new rules into the Firebase console (setup step 2), then tap Check again.");
+            return;
+        }
+    } catch {
+        if (stale()) return;
+        edShowAuth('denied');
+        edAuthMsg("Couldn't reach the database. Check your connection and tap Check again.");
+        return;
+    }
+    if (stale()) return;
+    edIsOwner = owner === key;
+    if (edIsOwner || onList) { edUnlock(); return; }
+    if (owner === null && !ownerHidden) { edShowAuth('claim'); return; }
+    edShowAuth('denied');
+}
+
+function edUnlock() {
+    document.getElementById('acct-email').textContent = edUser.email;
+    document.getElementById('editors-btn').style.display = edIsOwner ? '' : 'none';
+    document.body.classList.add('ed-unlocked');
+    if (!edStarted) { edStarted = true; edStartEditor(); }
+}
+
+async function edSignIn(ev) {
+    ev.preventDefault();
+    if (!auth) { edAuthMsg("Couldn't load sign-in. Check your connection and reload the page."); return; }
+    const btn = document.getElementById('si-btn');
+    const pass = document.getElementById('si-pass');
+    btn.disabled = true;
+    edAuthMsg('Signing in…', 'info');
+    try {
+        await auth.signInWithEmailAndPassword(document.getElementById('si-email').value.trim(), pass.value);
+        pass.value = '';
+        // onAuthStateChanged → edRoute takes it from here.
+    } catch (e) {
+        edAuthMsg(edAuthErrorText(e));
+    }
+    btn.disabled = false;
+}
+
+async function edSignUp(ev) {
+    ev.preventDefault();
+    if (!auth) { edAuthMsg("Couldn't load sign-in. Check your connection and reload the page."); return; }
+    const email = document.getElementById('su-email').value.trim();
+    const p1 = document.getElementById('su-pass'), p2 = document.getElementById('su-pass2');
+    if (p1.value.length < 8) { edAuthMsg('Pick a password with at least 8 characters.'); return; }
+    if (p1.value !== p2.value) { edAuthMsg("The two passwords don't match."); return; }
+    const btn = document.getElementById('su-btn');
+    btn.disabled = true;
+    edAuthMsg('Creating your account…', 'info');
+    let cred;
+    try {
+        cred = await auth.createUserWithEmailAndPassword(email, p1.value);
+    } catch (e) {
+        edAuthMsg(edAuthErrorText(e));
+        btn.disabled = false;
+        return;
+    }
+    btn.disabled = false;
+    p1.value = p2.value = '';
+    edUser = cred.user;
+    try {
+        await cred.user.sendEmailVerification();
+        edShowAuth('verify');
+        edAuthMsg('Account created! Check your email for the confirmation link.', 'ok');
+    } catch (e) {
+        edShowAuth('verify');
+        edAuthMsg('Your account was created, but the confirmation email didn\'t send. Tap "Send the email again".');
+    }
+}
+
+async function edCheckVerified() {
+    if (!edUser) return;
+    const btn = document.getElementById('verify-btn');
+    btn.disabled = true;
+    edAuthMsg('Checking…', 'info');
+    try { await edUser.reload(); }
+    catch (e) { edAuthMsg(edAuthErrorText(e)); btn.disabled = false; return; }
+    btn.disabled = false;
+    if (!edUser.emailVerified) {
+        edAuthMsg('Not confirmed yet. Click the link in the email first, then tap this button again.');
+        return;
+    }
+    try { await edUser.getIdToken(true); } catch {}
+    edRoute(edUser);
+}
+
+async function edResendVerification() {
+    if (!edUser) return;
+    try {
+        await edUser.sendEmailVerification();
+        edAuthMsg('Sent! Check your email (and your spam folder).', 'ok');
+    } catch (e) {
+        edAuthMsg(edAuthErrorText(e));
+    }
+}
+
+async function edForgotPassword() {
+    const input = document.getElementById('si-email');
+    const email = input.value.trim();
+    if (!email) {
+        edAuthMsg('Type your email in the box above first, then tap "Forgot password?".', 'info');
+        input.focus();
+        return;
+    }
+    if (!auth) { edAuthMsg("Couldn't load sign-in. Check your connection and reload the page."); return; }
+    const sent = `If there's an account for ${email}, a link to reset the password is on its way. Check your spam folder too.`;
+    try {
+        await auth.sendPasswordResetEmail(email);
+        edAuthMsg(sent, 'ok');
+    } catch (e) {
+        // Same answer whether or not the account exists (don't reveal who has one).
+        if (e?.code === 'auth/user-not-found') edAuthMsg(sent, 'ok');
+        else edAuthMsg(edAuthErrorText(e));
+    }
+}
+
+async function edClaimOwner() {
+    if (!edUser || !db) return;
+    if (!confirm(`Make ${edUser.email} the owner?\n\nThe owner is the only one who can add or remove editors. After this, the owner can only be changed from the Firebase console.`)) return;
+    const btn = document.getElementById('claim-btn');
+    btn.disabled = true;
+    edAuthMsg('Setting you up as the owner…', 'info');
+    try {
+        await db.ref('editorOwner').set(edEmailKey(edUser.email));
+    } catch (e) {
+        btn.disabled = false;
+        edAuthMsg(_edIsDenied(e)
+            ? 'The database said no. Someone may have just claimed it. Tap Sign out, sign back in, and check again.'
+            : "Couldn't save. Check your connection and try again.");
+        return;
+    }
+    btn.disabled = false;
+    edRoute(edUser);
+}
+
+function edRecheck() { if (edUser) edRoute(edUser); }
+
+async function edSignOut() {
+    try { await auth?.signOut(); } catch {}
+    // onAuthStateChanged(null) → edRoute reloads the page or shows sign-in.
+}
+
+// ── Approved editors (owner only) ───────────────────────────────────────────
+function openEditors() {
+    if (!edIsOwner) return;
+    document.getElementById('editors-modal').classList.add('open');
+    _edEditorsMsg('');
+    edLoadEditors();
+    setTimeout(() => document.getElementById('editors-input').focus(), 0);
+}
+function closeEditors() { document.getElementById('editors-modal').classList.remove('open'); }
+
+function _edEditorsMsg(text, type = 'err') {
+    const el = document.getElementById('editors-msg');
+    el.textContent = text || '';
+    el.className = text ? `status ${type}` : 'status';
+}
+
+function _edEditorRow(email, isOwner, key) {
+    const row = document.createElement('div');
+    row.className = 'ws-row';
+    const name = document.createElement('span');
+    name.className = 'ed-email';
+    name.textContent = email;
+    if (isOwner) {
+        const badge = document.createElement('span');
+        badge.className = 'ed-owner-badge';
+        badge.textContent = 'Owner';
+        name.appendChild(badge);
+    } else {
+        const rm = document.createElement('button');
+        rm.className = 'btn btn-sec btn-sm';
+        rm.textContent = 'Remove';
+        rm.onclick = () => edRemoveEditor(key, email);
+        row.append(name, rm);
+        return row;
+    }
+    row.appendChild(name);
+    return row;
+}
+
+async function edLoadEditors() {
+    const body = document.getElementById('editors-body');
+    body.innerHTML = '<div class="ed-empty">Loading…</div>';
+    let val;
+    try { val = (await _edRead('editors')).val() || {}; }
+    catch {
+        body.innerHTML = '';
+        _edEditorsMsg("Couldn't load the list. Check your connection and try again.");
+        return;
+    }
+    const myKey = edEmailKey(edUser.email);
+    const people = Object.entries(val)
+        .filter(([k]) => k !== myKey)
+        .map(([k, v]) => ({ key: k, email: typeof v === 'string' ? v : k.replace(/,/g, '.') }))
+        .sort((a, b) => a.email.localeCompare(b.email));
+    body.innerHTML = '';
+    body.appendChild(_edEditorRow(edUser.email, true));
+    if (!people.length) {
+        const empty = document.createElement('div');
+        empty.className = 'ed-empty';
+        empty.textContent = "No one else yet. Add someone's email below.";
+        body.appendChild(empty);
+    }
+    for (const p of people) body.appendChild(_edEditorRow(p.email, false, p.key));
+}
+
+async function edAddEditor() {
+    const input = document.getElementById('editors-input');
+    const email = input.value.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || /[#$\[\]\/]/.test(email)) {
+        _edEditorsMsg("That doesn't look like an email address.");
+        return;
+    }
+    const key = edEmailKey(email);
+    if (key === edEmailKey(edUser.email)) { _edEditorsMsg("That's you. You're already the owner.", 'info'); return; }
+    const btn = document.getElementById('editors-add-btn');
+    btn.disabled = true;
+    try {
+        await db.ref(`editors/${key}`).set(email);
+    } catch (e) {
+        btn.disabled = false;
+        _edEditorsMsg(_edIsDenied(e)
+            ? "The database wouldn't let you add them. Try signing out and back in."
+            : "Couldn't save. Check your connection and try again.");
+        return;
+    }
+    btn.disabled = false;
+    input.value = '';
+    _edEditorsMsg(`Added ${email}. They can now open this page, tap "Create an account", and use that email.`, 'ok');
+    edLoadEditors();
+}
+
+async function edRemoveEditor(key, email) {
+    if (!confirm(`Remove ${email}?\n\nThey'll lose access to the editor right away. You can add them back any time.`)) return;
+    try {
+        await db.ref(`editors/${key}`).remove();
+    } catch (e) {
+        _edEditorsMsg(_edIsDenied(e)
+            ? "The database wouldn't let you remove them. Try signing out and back in."
+            : "Couldn't save. Check your connection and try again.");
+        return;
+    }
+    _edEditorsMsg(`Removed ${email}.`, 'ok');
+    edLoadEditors();
+}
+
+if (auth) auth.onAuthStateChanged(u => edRoute(u));
+else { edShowAuth('signin'); edAuthMsg("Couldn't load sign-in. Check your connection and reload the page."); }
 
 // ── Scheduled boards calendar ──────────────────────────────────────────────
 // "Today" as the GAME defines it: America/New_York wall clock with a 5 AM
@@ -467,6 +1000,7 @@ const ECONFIG = () => edMini ? 'boardConfigMini'     : 'boardConfig';
 async function onMiniModeToggle() {
     edMini = document.getElementById('mini-mode-cb').checked;
     document.getElementById('save-btn').textContent = edMini ? 'Save Mini Board' : 'Save Board';
+    bbLoadSettings();           // Board Builder fields → this track's ranges
     await initSchedCalendar();  // refresh availability dots for the active (daily/mini) set
     // Reload the currently-selected date from the active set (or start a fresh board).
     const hasBoard = !!(edAvailDates && edAvailDates[edSelectedDate]);
@@ -565,6 +1099,7 @@ async function selectCalendarDay(dateStr, hasBoard) {
         _edAddedWords = [];
         _resetPuzzleCustomizations(null);
         buildEditorTable(false, null);
+        _bbSetSeed(null);
         scheduleWordCount();
         showStatus(`New board for ${dateStr} — add letters and Save Board.`, 'info');
         renderSchedCalendar();
@@ -581,7 +1116,8 @@ async function _loadDailyBoardIntoEditor(dateStr) {
         editorRows = cfg.rows; editorCols = cfg.cols;
         _edAddedWords = [];
         _resetPuzzleCustomizations(cfg);
-        buildEditorTable(false, cfg.cells);
+        buildEditorTable(false, _edGapsAsBlocked(cfg.cells, cfg.rows, cfg.cols));
+        _bbSetSeed(typeof cfg.seedWord === 'string' ? cfg.seedWord : null);
         scheduleWordCount();
         showStatus(`Loaded ${dateStr}. Edit and Save Board to update it.`, 'ok');
         renderSchedCalendar();
@@ -614,6 +1150,10 @@ async function saveBoard() {
         if (_edPuzzleRemoved.size)  payload.puzzleRemoved  = [..._edPuzzleRemoved];
         if (_edPuzzleIncluded.size) payload.puzzleIncluded = [..._edPuzzleIncluded];
         if (_edPuzzleCustom.length) payload.puzzleCustom   = _edPuzzleCustom.slice();
+        // Board Builder: record this board's big word so New Word never picks it
+        // again for this track. Saving over a date replaces (frees) its old one.
+        const seedWord = _bbSeedForSave(cells);
+        if (seedWord) payload.seedWord = seedWord;
         await db.ref(`${EBOARDS()}/${edSelectedDate}`).set(payload);
         await db.ref(`${EDATES()}/${edSelectedDate}`).set(true);
         if (edAvailDates) edAvailDates[edSelectedDate] = true; // update local cache
@@ -685,6 +1225,15 @@ function buildEditorTable(keepExisting, prefill) {
                     const next = table.querySelector(`input[data-r="${r}"][data-c="${c+1}"]`)
                               || table.querySelector(`input[data-r="${r+1}"][data-c="0"]`);
                     next?.focus();
+                } else if (ev.key === '-' || ev.key === '_') {
+                    // "-" blocks the tile (a gap the random tools won't fill).
+                    ev.preventDefault();
+                    inp.value = '-';
+                    clearStatus();
+                    scheduleWordCount();
+                    const next = table.querySelector(`input[data-r="${r}"][data-c="${c+1}"]`)
+                              || table.querySelector(`input[data-r="${r+1}"][data-c="0"]`);
+                    next?.focus();
                 } else if (ev.key === ' ') {
                     ev.preventDefault();
                     inp.value = '';
@@ -714,6 +1263,7 @@ function adjustDim(dim, delta) {
 function clearAll() {
     document.getElementById('editor-table').querySelectorAll('input')
         .forEach(inp => inp.value = '');
+    _bbSetSeed(null);
     clearStatus();
     scheduleWordCount();
 }
@@ -1098,11 +1648,16 @@ function renderPuzzleCustomList() {
 let edDict = null;
 let _wcTimer;
 
+// Same combined "in all three" dictionary + cache key as index.html / test.html.
 (async () => {
-    const cached = localStorage.getItem('G2_dict_v3');
-    if (cached) { edDict = new Set(cached.split('\n')); updateWordCount(); return; }
+    try { localStorage.removeItem('G2_dict_v3'); } catch {}
+    const cached = localStorage.getItem('G2_dict_v4');
+    // Deferred: this cached path runs while the script is still loading, before
+    // the word-list variables further down exist (calling now threw a
+    // "before initialization" error).
+    if (cached) { edDict = new Set(cached.split('\n')); setTimeout(updateWordCount, 0); return; }
     try {
-        const res = await fetch('./2of12inf.txt');
+        const res = await fetch('./in_all_three_333k.txt');
         if (res.ok) {
             const words = (await res.text()).split(/[\n\r]+/)
                 .map(l => l.trim().replace(/[%!]+$/, ''))
@@ -1110,7 +1665,7 @@ let _wcTimer;
                 .map(w => w.toUpperCase());
             edDict = new Set(words);
             _edTrie = null;
-            try { localStorage.setItem('G2_dict_v3', words.join('\n')); } catch {}
+            try { localStorage.setItem('G2_dict_v4', words.join('\n')); } catch {}
             updateWordCount();
         }
     } catch {}
@@ -1248,7 +1803,26 @@ function _edUpdateUnusedTiles() {
         if (!inp) continue;
         const hasLetter = !!cells[r]?.[c];
         inp.classList.toggle('exhausted', hasLetter && !used.has(r*editorCols+c));
+        inp.classList.toggle('blocked', inp.value === '-');
     }
+}
+
+// Tiles marked "-" (blocked), as a flat array indexed r*cols+c.
+function _edBlockedMask() {
+    const table = document.getElementById('editor-table');
+    const mask = new Array(editorRows * editorCols).fill(false);
+    for (let r=0; r<editorRows; r++) for (let c=0; c<editorCols; c++) {
+        const inp = table.querySelector(`input[data-r="${r}"][data-c="${c}"]`);
+        if (inp && inp.value === '-') mask[r*editorCols+c] = true;
+    }
+    return mask;
+}
+
+// A saved board's gaps come back as "-" so the shape survives New Word / Mixup /
+// Fill Random. (A gap and a "-" save identically.)
+function _edGapsAsBlocked(cells, rows, cols) {
+    return Array.from({ length: rows }, (_, r) =>
+        Array.from({ length: cols }, (_, c) => cells?.[r]?.[c] || '-'));
 }
 
 function updateWordCount() {
@@ -1276,6 +1850,7 @@ function updateWordCount() {
     el.textContent = _edActivePuzzleWords().length.toLocaleString();
     renderWordList();
     _edUpdateUnusedTiles();
+    _bbRenderSeed();   // flag the big word if hand edits broke it
 }
 
 function renderWordList() {
@@ -1456,9 +2031,11 @@ function _edToBoard(graph) {
 }
 
 // ── Fill Random: morpheme-seeded fill of the current ROW×COL grid ──────────
-function _edBuildRectGraph(rows, cols) {
+// `blocked` (optional): flat mask of "-" tiles to leave out of the graph.
+function _edBuildRectGraph(rows, cols, blocked) {
     const nodes=[], idxOf=new Map();
     for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+        if(blocked && blocked[r*cols+c]) continue;
         idxOf.set(r*cols+c, nodes.length);
         nodes.push({coord:{r,c}, letter:'', neighbors:[]});
     }
@@ -1467,7 +2044,7 @@ function _edBuildRectGraph(rows, cols) {
         for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
             if(!dr&&!dc) continue;
             const nr=r+dr,nc=c+dc;
-            if(nr>=0&&nr<rows&&nc>=0&&nc<cols) node.neighbors.push(idxOf.get(nr*cols+nc));
+            if(nr>=0&&nr<rows&&nc>=0&&nc<cols&&idxOf.has(nr*cols+nc)) node.neighbors.push(idxOf.get(nr*cols+nc));
         }
     }
     return nodes;
@@ -1602,17 +2179,20 @@ function _edAllTilesUsed(cells, rows, cols) {
 
 function fillRandom() {
     const trie=_edGetTrie();
+    const blocked=_edBlockedMask();   // "-" tiles stay blocked
+    if(blocked.every(Boolean)){ showStatus('Every tile is blocked with "-" — nothing to fill.', 'err'); return; }
     for(let attempt=0; attempt<50; attempt++){
-        const graph=_edBuildRectGraph(editorRows, editorCols);
+        const graph=_edBuildRectGraph(editorRows, editorCols, blocked);
         _edSeedAndFill(graph);
         if(trie) _edValidateRepair(graph, trie);
-        const cells=Array.from({length:editorRows},(_,r)=>Array.from({length:editorCols},(_,c)=>graph[r*editorCols+c].letter));
+        const cells=Array.from({length:editorRows},()=>new Array(editorCols).fill(null));
+        for(const nd of graph) cells[nd.coord.r][nd.coord.c]=nd.letter;
         if(edDict && attempt<49 && !_edAllTilesUsed(cells, editorRows, editorCols)) continue;
         const inputs=document.getElementById('editor-table').querySelectorAll('input');
         for(let r=0;r<editorRows;r++) for(let c=0;c<editorCols;c++){
-            const inp=inputs[r*editorCols+c]; if(inp) inp.value=cells[r][c];
+            const inp=inputs[r*editorCols+c]; if(inp) inp.value=blocked[r*editorCols+c]?'-':cells[r][c];
         }
-        _edAddedWords=[]; _resetPuzzleCustomizations(null);
+        _edAddedWords=[]; _resetPuzzleCustomizations(null); _bbSetSeed(null);
         clearStatus(); scheduleWordCount(); return;
     }
 }
@@ -1627,11 +2207,426 @@ function generateRandom() {
         const board=_edToBoard(graph);
         if(edDict && !_edAllTilesUsed(board.cells, board.rows, board.cols)) continue;
         editorRows=board.rows; editorCols=board.cols;
-        _edAddedWords=[]; _resetPuzzleCustomizations(null);
+        _edAddedWords=[]; _resetPuzzleCustomizations(null); _bbSetSeed(null);
         buildEditorTable(false, board.cells);
         clearStatus(); scheduleWordCount(); return;
     }
 }
+// ── Board Builder core (no DOM) ─────────────────────────────────────────────
+// Places one long "big word" as compactly as possible on the current R×C grid
+// (reusing its own letters via double-back), then fills every other tile with
+// letters so that every tile is used and the word count lands in a range.
+
+// "9+" → {lo:9,hi:Infinity}; "10-14" → {lo:10,hi:14}; "11" → {lo:11,hi:11}
+function _bbParseRange(str) {
+    const s = String(str || '').replace(/[–—]/g, '-').replace(/\s+/g, '');
+    let m;
+    if ((m = s.match(/^(\d+)\+$/)))       return { lo: +m[1], hi: Infinity };
+    if ((m = s.match(/^(\d+)-(\d+)$/)))   return { lo: Math.min(+m[1], +m[2]), hi: Math.max(+m[1], +m[2]) };
+    if ((m = s.match(/^(\d+)$/)))         return { lo: +m[1], hi: +m[1] };
+    return null;
+}
+function _bbRangeText(r) {
+    return r.hi === Infinity ? `${r.lo}+` : (r.lo === r.hi ? `${r.lo}` : `${r.lo}–${r.hi}`);
+}
+
+function _bbShuffle(a) {
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; }
+    return a;
+}
+
+// Neighbor lists in the SAME order the game/editor DFS uses (dr -1..1, dc -1..1),
+// so first-path (grey tile) checks match exactly.
+function _bbNeighbors(R, C) {
+    const nb = [];
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+        const a = [];
+        for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+            if (!dr && !dc) continue;
+            const nr = r + dr, nc = c + dc;
+            if (nr >= 0 && nr < R && nc >= 0 && nc < C) a.push(nr * C + nc);
+        }
+        nb.push(a);
+    }
+    return nb;
+}
+
+// Fewest tiles the word could ever need: one per distinct letter, plus one more
+// for each letter that appears doubled (LL, SS…) — a tile can't follow itself.
+function _bbMinTiles(word) {
+    const distinct = new Set(word).size;
+    const dbl = new Set();
+    for (let i = 1; i < word.length; i++) if (word[i] === word[i - 1]) dbl.add(word[i]);
+    return distinct + dbl.size;
+}
+
+// Compact placement. Returns { grid: Array(N) of letter|null, path, tiles } or
+// null if it can't be placed (or the search ran out of budget at every size).
+// opts.blocked: flat mask of "-" tiles the word may not use.
+function _bbPlaceCompact(word, R, C, opts = {}) {
+    const N = R * C, L = word.length;
+    const blocked = opts.blocked || null;
+    const open = [];
+    for (let k = 0; k < N; k++) if (!blocked || !blocked[k]) open.push(k);
+    const nb = _bbNeighbors(R, C).map(a => blocked ? a.filter(j => !blocked[j]) : a);
+    const minTiles = _bbMinTiles(word);
+    if (minTiles > open.length) return null;
+    const perLevelBudget = opts.budget || 300000;
+
+    // Suffix info for the lower bound: letters still needed from position i on,
+    // and which of them need 2 tiles (a doubled pair at/after i).
+    const sufLetters = [], sufDouble = [];
+    for (let i = L; i >= 0; i--) {
+        const s = new Set(i < L ? sufLetters[i + 1] : []), d = new Set(i < L ? sufDouble[i + 1] : []);
+        if (i < L) { s.add(word[i]); if (i >= 1 && word[i] === word[i - 1]) d.add(word[i]); }
+        sufLetters[i] = s; sufDouble[i] = d;
+    }
+
+    const STOP = {};
+    for (let K = minTiles; K <= open.length; K++) {
+        const grid = new Array(N).fill(null), cnt = {}, path = new Array(L);
+        let used = 0, nodes = 0;
+        const lb = i => {
+            let extra = 0;
+            for (const ch of sufLetters[i]) {
+                const need = sufDouble[i].has(ch) ? 2 : 1, have = cnt[ch] || 0;
+                if (have < need) extra += need - have;
+            }
+            return extra;
+        };
+        const dfs = (i, prev) => {
+            if (++nodes > perLevelBudget) throw STOP;
+            if (i === L) return true;
+            const ch = word[i];
+            const cand = _bbShuffle(prev < 0 ? open.slice() : nb[prev].slice());
+            // Reuse an existing tile with this letter first (costs nothing)…
+            if (used + lb(i + 1) <= K) {
+                for (const k of cand) if (grid[k] === ch) {
+                    path[i] = k;
+                    if (dfs(i + 1, k)) return true;
+                }
+            }
+            // …otherwise claim a fresh empty tile.
+            if (used + 1 > K) return false;
+            for (const k of cand) if (grid[k] === null) {
+                grid[k] = ch; cnt[ch] = (cnt[ch] || 0) + 1; used++;
+                if (used + lb(i + 1) <= K) {
+                    path[i] = k;
+                    if (dfs(i + 1, k)) return true;
+                }
+                grid[k] = null; cnt[ch]--; used--;
+            }
+            return false;
+        };
+        try {
+            if (dfs(0, -1)) return { grid, path: path.slice(), tiles: used };
+        } catch (e) { if (e !== STOP) throw e; }
+    }
+    return null;
+}
+
+// Trie whose end nodes hold the word itself.
+function _bbBuildTrie(words) {
+    const root = {};
+    for (const w of words) {
+        let n = root;
+        for (const ch of w) n = n[ch] || (n[ch] = {});
+        n.$ = w;
+    }
+    return root;
+}
+
+// All trie words the grid can spell (double-back allowed; a tile can't follow itself).
+function _bbFindWords(grid, nb, trie) {
+    const found = new Set();
+    const dfs = (k, node) => {
+        const nx = node[grid[k]];
+        if (!nx) return;
+        if (nx.$) found.add(nx.$);
+        for (const j of nb[k]) if (grid[j]) dfs(j, nx);
+    };
+    for (let k = 0; k < grid.length; k++) if (grid[k]) dfs(k, trie);
+    return found;
+}
+
+// First DFS path for a word — identical search order to the game's tile-greying.
+function _bbFirstPath(word, grid, nb) {
+    const path = [];
+    const dfs = (k, idx) => {
+        if (idx === word.length) return true;
+        for (const j of nb[k]) if (grid[j] === word[idx]) {
+            path.push(j);
+            if (dfs(j, idx + 1)) return true;
+            path.pop();
+        }
+        return false;
+    };
+    for (let k = 0; k < grid.length; k++) if (grid[k] === word[0]) {
+        path.length = 0; path.push(k);
+        if (dfs(k, 1)) return path;
+    }
+    return null;
+}
+
+// Score a grid: active word count, and which lettered tiles would show grey.
+function _bbEvaluate(grid, nb, trie, excluded) {
+    const words = [];
+    for (const w of _bbFindWords(grid, nb, trie)) if (!excluded.has(w)) words.push(w);
+    const used = new Set();
+    for (const w of words) { const p = _bbFirstPath(w, grid, nb); if (p) for (const k of p) used.add(k); }
+    const unused = [];
+    for (let k = 0; k < grid.length; k++) if (grid[k] && !used.has(k)) unused.push(k);
+    return { words, count: words.length, unused };
+}
+
+const _BB_LETTER_WEIGHTS = { E:12, A:9, I:8, O:8, T:9, N:7, S:7, R:7, H:3, L:5, D:4, C:3, U:3, M:3,
+    F:2, P:2, G:2, W:1.5, Y:1.5, B:2, V:1, K:1, X:0.3, J:0.3, Z:0.2 };
+const _BB_POOL = (() => {
+    const a = []; for (const [ch, w] of Object.entries(_BB_LETTER_WEIGHTS)) for (let i = 0; i < Math.round(w * 4); i++) a.push(ch);
+    return a;
+})();
+function _bbRandLetter() { return _BB_POOL[Math.random() * _BB_POOL.length | 0]; }
+
+function _bbCost(ev, lo, hi) {
+    const gap = ev.count < lo ? lo - ev.count : ev.count > hi ? ev.count - hi : 0;
+    return ev.unused.length * 1000 + gap;
+}
+
+// Fill every empty tile of `seedGrid` so all tiles are used and the count is in
+// [lo, hi]. Hill-climbs with random restarts until `deadline` (ms timestamp).
+// Returns the best { grid, ev, cost } found.
+// `blocked` tiles stay empty (null) — they're gaps, never filled.
+function _bbFill(seedGrid, R, C, trie, excluded, lo, hi, deadline, blocked) {
+    const N = R * C, nb = _bbNeighbors(R, C);
+    const fillCells = [];
+    for (let k = 0; k < N; k++) if (!seedGrid[k] && !(blocked && blocked[k])) fillCells.push(k);
+    if (!fillCells.length) {
+        const g = seedGrid.slice(), ev = _bbEvaluate(g, nb, trie, excluded);
+        return { grid: g, ev, cost: _bbCost(ev, lo, hi) };
+    }
+    const fillSet = new Set(fillCells);
+    let best = null;
+    do {
+        const g = seedGrid.slice();
+        for (const k of fillCells) g[k] = _bbRandLetter();
+        let ev = _bbEvaluate(g, nb, trie, excluded), cost = _bbCost(ev, lo, hi);
+        for (let step = 0; step < 400 && cost > 0 && Date.now() < deadline; step++) {
+            // Pick a fill tile to change: if some tile is grey, work on it (or a
+            // fill neighbor of it); otherwise any fill tile.
+            let k;
+            if (ev.unused.length && Math.random() < 0.8) {
+                const u = ev.unused[Math.random() * ev.unused.length | 0];
+                const opts = [u, ...nb[u]].filter(x => fillSet.has(x));
+                k = opts.length ? opts[Math.random() * opts.length | 0] : fillCells[Math.random() * fillCells.length | 0];
+            } else k = fillCells[Math.random() * fillCells.length | 0];
+            const old = g[k];
+            let ch = _bbRandLetter(); for (let t = 0; t < 5 && ch === old; t++) ch = _bbRandLetter();
+            g[k] = ch;
+            const ev2 = _bbEvaluate(g, nb, trie, excluded), cost2 = _bbCost(ev2, lo, hi);
+            if (cost2 <= cost) { ev = ev2; cost = cost2; } else g[k] = old;
+        }
+        if (!best || cost < best.cost) best = { grid: g.slice(), ev, cost };
+        if (best.cost === 0) break;
+    } while (Date.now() < deadline);
+    return best;
+}
+
+// Full build for one word: tries fresh compact placements + fills until one
+// lands in range or time runs out. Returns { ok, reason, grid, ev, tiles, cost }.
+function _bbBuild(word, R, C, trie, excluded, lo, hi, timeMs = 3000, blocked = null) {
+    const start = Date.now(), deadline = start + timeMs;
+    let best = null, placedAny = false;
+    do {
+        const pl = _bbPlaceCompact(word, R, C, { blocked });
+        if (!pl) break;
+        placedAny = true;
+        // Give each placement a slice of time so Mixup-style variety is explored.
+        const sliceEnd = Math.min(deadline, Date.now() + Math.max(400, timeMs / 4));
+        const res = _bbFill(pl.grid, R, C, trie, excluded, lo, hi, sliceEnd, blocked);
+        if (!best || res.cost < best.cost) best = { ...res, tiles: pl.tiles };
+        if (best.cost === 0) break;
+    } while (Date.now() < deadline);
+    if (!placedAny) return { ok: false, reason: 'nofit', minTiles: _bbMinTiles(word) };
+    return { ok: best.cost === 0, reason: best.cost === 0 ? null : 'range', ...best };
+}
+
+
+// ── Board Builder: editor glue (buttons, settings, used-word tracking) ───────
+// `var` (not let): updateWordCount → _bbRenderSeed can run before this line
+// executes (the cached-dictionary path fires during script load).
+var _bbSeed = null;        // big word currently on the board (null = none)
+var _bbBusy = false;
+let _bbTrie = null, _bbTrieKey = '';
+// Per track ('daily' | 'mini'): live Map(date → seedWord) of every saved board's
+// big word, kept current by a Firebase listener so other editors' saves count too.
+const _bbUsed = {};
+const BB_SETTINGS_KEY = 'G2_bb_settings';
+const BB_DEFAULTS = { daily: { len: '9+', count: '35-60' }, mini: { len: '9+', count: '20-40' } };
+const _bbTrack = () => edMini ? 'mini' : 'daily';
+
+function _bbReadSettings() {
+    try { return JSON.parse(localStorage.getItem(BB_SETTINGS_KEY) || '{}') || {}; } catch { return {}; }
+}
+// Put the active track's (remembered or default) ranges into the fields.
+function bbLoadSettings() {
+    const t = _bbTrack(), v = { ...BB_DEFAULTS[t], ...(_bbReadSettings()[t] || {}) };
+    document.getElementById('bb-len').value = v.len;
+    document.getElementById('bb-count').value = v.count;
+    document.getElementById('bb-track').textContent = edMini ? '· Mini' : '· Regular';
+}
+function bbSaveSettings() {
+    const s = _bbReadSettings();
+    s[_bbTrack()] = {
+        len:   document.getElementById('bb-len').value.trim()   || BB_DEFAULTS[_bbTrack()].len,
+        count: document.getElementById('bb-count').value.trim() || BB_DEFAULTS[_bbTrack()].count,
+    };
+    try { localStorage.setItem(BB_SETTINGS_KEY, JSON.stringify(s)); } catch {}
+}
+
+function _bbSetSeed(w) { _bbSeed = w || null; _bbRenderSeed(); }
+function _bbRenderSeed() {
+    const el = document.getElementById('bb-seed');
+    if (!el) return;
+    if (!_bbSeed) { el.textContent = 'Big word: none'; return; }
+    const { cells } = readCells();
+    const onBoard = edCanSpell(_bbSeed, cells, editorRows, editorCols);
+    el.innerHTML = `Big word: <b style="color:var(--primary);letter-spacing:0.04em">${_bbSeed}</b>` +
+        (onBoard ? '' : ' <span style="color:var(--error);font-weight:600">— not on the board, so it won’t be recorded</span>');
+}
+
+// The big word to store with a save: only if it's still spellable and in the puzzle.
+function _bbSeedForSave(cells) {
+    if (!_bbSeed) return null;
+    if (!edCanSpell(_bbSeed, cells, editorRows, editorCols)) return null;
+    if (!_edActivePuzzleWords().includes(_bbSeed)) return null;
+    return _bbSeed;
+}
+
+function _bbWatchUsed(track) {
+    if (!db) return Promise.resolve();
+    if (_bbUsed[track]) return _bbUsed[track].ready;
+    const entry = { map: new Map(), ready: null };
+    const ref = db.ref(track === 'mini' ? 'dailyMiniBoards' : 'dailyBoards');
+    entry.ready = new Promise((resolve, reject) => {
+        ref.on('value', snap => {
+            const m = new Map();
+            const val = snap.val() || {};
+            for (const date of Object.keys(val)) {
+                const w = val[date] && val[date].seedWord;
+                if (typeof w === 'string' && w) m.set(date, w);
+            }
+            entry.map = m;
+            resolve();
+        }, err => { delete _bbUsed[track]; reject(err); });
+    });
+    _bbUsed[track] = entry;
+    return entry.ready;
+}
+
+// Dictionary + approved words, ending nodes hold the word (rebuilt if either changes).
+function _bbGetTrie() {
+    const key = `${edDict.size}:${edWordApprovals.size}`;
+    if (_bbTrie && _bbTrieKey === key) return _bbTrie;
+    _bbTrieKey = key;
+    return _bbTrie = _bbBuildTrie([...edDict, ...edWordApprovals]);
+}
+
+function _bbButtons(enabled) {
+    for (const id of ['bb-new-btn', 'bb-mix-btn']) { const b = document.getElementById(id); if (b) b.disabled = !enabled; }
+}
+
+function _bbReadRanges() {
+    const lenR = _bbParseRange(document.getElementById('bb-len').value);
+    if (!lenR || lenR.lo < 4) { showStatus('Big word length should look like 9+, 10-14 or 11.', 'err'); return null; }
+    const cntR = _bbParseRange(document.getElementById('bb-count').value);
+    if (!cntR || cntR.hi === Infinity) { showStatus('Word count should be a range like 35-60.', 'err'); return null; }
+    bbSaveSettings();
+    return { lenR, cntR };
+}
+
+async function bbNewWord() {
+    if (_bbBusy) return;
+    if (!edDict) { showStatus('Dictionary is still loading — try again in a moment.', 'info'); return; }
+    const ranges = _bbReadRanges(); if (!ranges) return;
+    const track = _bbTrack();
+    _bbBusy = true; _bbButtons(false);
+    try {
+        if (db) {
+            showStatus('Checking which big words are already used…', 'info');
+            try { await _bbWatchUsed(track); }
+            catch (e) { showStatus(`Couldn't check which big words are used, so none was picked: ${e.message}`, 'err'); return; }
+        }
+        // Used = big words of every OTHER saved date in this track (this date's
+        // old one is freed when you save over it). Never repeat the current one.
+        const used = new Set();
+        if (_bbUsed[track]) for (const [date, w] of _bbUsed[track].map) if (date !== edSelectedDate) used.add(w);
+        const { lo, hi } = ranges.lenR;
+        const pool = [];
+        for (const w of edDict) {
+            if (w.length < lo || w.length > hi) continue;
+            if (edWordSelections.has(w) || used.has(w) || w === _bbSeed) continue;
+            pool.push(w);
+        }
+        if (!pool.length) { showStatus(`No unused ${_bbRangeText(ranges.lenR)}-letter words left.`, 'err'); return; }
+        _bbSetSeed(pool[Math.random() * pool.length | 0]);
+        await _bbBuildAndApply(ranges.cntR);
+    } finally { _bbBusy = false; _bbButtons(true); }
+}
+
+async function bbMixup() {
+    if (_bbBusy) return;
+    if (!_bbSeed) { showStatus('Press New Word first to pick a big word.', 'info'); return; }
+    if (!edDict) { showStatus('Dictionary is still loading — try again in a moment.', 'info'); return; }
+    const ranges = _bbReadRanges(); if (!ranges) return;
+    _bbBusy = true; _bbButtons(false);
+    try { await _bbBuildAndApply(ranges.cntR); }
+    finally { _bbBusy = false; _bbButtons(true); }
+}
+
+// Open (non "-") tiles must all touch each other (diagonals count), or the
+// finished board couldn't be saved.
+function _bbOpenTilesConnected(blocked, R, C) {
+    const open = []; for (let k = 0; k < R * C; k++) if (!blocked[k]) open.push(k);
+    if (!open.length) return false;
+    const seen = new Set([open[0]]), queue = [open[0]];
+    const nb = _bbNeighbors(R, C);
+    while (queue.length) for (const j of nb[queue.shift()]) if (!blocked[j] && !seen.has(j)) { seen.add(j); queue.push(j); }
+    return seen.size === open.length;
+}
+
+async function _bbBuildAndApply(cntR) {
+    const word = _bbSeed, R = editorRows, C = editorCols;
+    const target = _bbRangeText(cntR);
+    const blocked = _edBlockedMask();
+    const shaped = blocked.some(Boolean);
+    const where = shaped ? `this ${R}×${C} shape` : `${R}×${C}`;
+    if (!blocked.some(b => !b)) { showStatus('Every tile is blocked with "-" — nothing to build on.', 'err'); return; }
+    if (!_bbOpenTilesConnected(blocked, R, C)) {
+        showStatus('The open tiles (the ones without a "-") need to all touch each other, diagonals included.', 'err');
+        return;
+    }
+    showStatus(`Building ${shaped ? 'a custom-shaped' : `a ${R}×${C}`} board around ${word}…`, 'info');
+    await new Promise(r => setTimeout(r, 30));   // let the status paint before the busy loop
+    const res = _bbBuild(word, R, C, _bbGetTrie(), edWordSelections, cntR.lo, cntR.hi, 3000, shaped ? blocked : null);
+    if (res.reason === 'nofit') {
+        _bbRenderSeed();
+        showStatus(`${word} won't fit in ${where}. Open up more tiles and press Mixup, or press New Word for a different word.`, 'err');
+        return;
+    }
+    // Blocked tiles go back in as "-" so the shape is kept for the next Mixup.
+    const cells = Array.from({ length: R }, (_, r) => Array.from({ length: C }, (_, c) =>
+        blocked[r * C + c] ? '-' : res.grid[r * C + c]));
+    _edAddedWords = []; _resetPuzzleCustomizations(null);
+    buildEditorTable(false, cells);
+    updateWordCount();
+    const n = res.ev.count, grey = res.ev.unused.length;
+    if (res.ok) showStatus(`${word}: ${n} words, every tile used. Mixup for a new layout, or Save Board.`, 'ok');
+    else if (grey) showStatus(`Best try left ${grey} grey tile${grey > 1 ? 's' : ''} (${n} words). Press Mixup to try again, or change the grid size.`, 'err');
+    else showStatus(`Couldn't hit ${target} words with ${word} in ${where} — closest is ${n}. Press Mixup to try again, change the grid, or New Word.`, 'err');
+}
+
+bbLoadSettings();
+
 </script>
 </body>
 </html>

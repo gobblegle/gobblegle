@@ -493,7 +493,10 @@ try {
 } catch(e) { console.warn('Firebase not initialized:', e); }
 
 // ── State ──────────────────────────────────────────────────────────────────
-const DICT_CACHE_KEY = 'G2_dict_v3';
+// v4 = the combined "in all three" dictionary — same list and key as index.html.
+const DICT_CACHE_KEY = 'G2_dict_v4';
+const DICT_FILE = './in_all_three_333k.txt';
+try { localStorage.removeItem('G2_dict_v3'); } catch {}
 let boardRows = 5, boardCols = 5, boardCells = [], cellElements = [];
 let dictionary = new Set(), validWords = new Set(), foundWords = new Set();
 // "Linguist Bonus" words: board-spellable words that were red-checkmarked out of
@@ -961,7 +964,7 @@ async function loadDictionary() {
         return;
     }
     try {
-        const res = await fetch('./2of12inf.txt');
+        const res = await fetch(DICT_FILE);
         if (res.ok) { processDictText(await res.text()); return; }
     } catch {}
     document.getElementById('loader').innerHTML =

@@ -783,7 +783,12 @@ try {
 } catch(e) { console.warn('Firebase not initialized:', e); }
 
 // ── State ──────────────────────────────────────────────────────────────────
-const DICT_CACHE_KEY = 'G2_dict_v3';
+// v4 = the combined "in all three" dictionary (2of12inf ∩ NWL2023 ∩ Google 333k).
+// Bumping the key makes every browser fetch the new list instead of its cached
+// old one; the stale v3 copy is deleted below to free storage.
+const DICT_CACHE_KEY = 'G2_dict_v4';
+const DICT_FILE = './in_all_three_333k.txt';
+try { localStorage.removeItem('G2_dict_v3'); } catch {}
 const DAILY_CFG_CACHE_KEY = 'G2_dailycfg_v1'; // last good daily board, for offline "continue"
 const MINI_CFG_CACHE_KEY  = 'G2_minicfg_v1';  // last good mini board, for offline "continue"
 const FB_TIMEOUT_MS = 5000;                    // max wait for a Firebase board read
@@ -1349,7 +1354,7 @@ async function loadDictionary() {
         return;
     }
     try {
-        const res = await fetch('./2of12inf.txt');
+        const res = await fetch(DICT_FILE);
         if (res.ok) { processDictText(await res.text()); return; }
     } catch {}
     document.getElementById('loader').innerHTML =
@@ -1445,10 +1450,21 @@ async function refreshBoardConfigInBackground() {
     } catch {}
 }
 
+// A board with no date (today's puzzle isn't scheduled, so the fallback board loads)
+// names its save slot after its tile layout. Rotating rewrites that layout, so every
+// save after a rotation went to a brand-new slot while the next visit read the original
+// one — progress "jumped back" to the moment of the first rotation. rotateBoard() pins
+// the original name here. The pin is tied to the exact cells array it was made for, so
+// loading any other board (which assigns a new array) ignores it automatically.
+let rotatedBoardPin = null; // { cells, hash }
+function layoutHash() {
+    if (rotatedBoardPin && rotatedBoardPin.cells === boardCells) return rotatedBoardPin.hash;
+    return boardCells.flat().map(c => c||'_').join('');
+}
 function getBoardHash() {
     // Namespace by mode so the Daily and Mini tracks never share saved progress.
     if (currentBoardDate) return `${gameMode === 'mini' ? 'mini' : 'daily'}_${currentBoardDate}`;
-    return boardCells.flat().map(c => c||'_').join('');
+    return layoutHash();
 }
 
 // Cache the last successfully-loaded daily board so a returning user with poor/no
@@ -1478,8 +1494,14 @@ function loadCachedDailyConfig(date) {
 
 // ── Solo progress ──────────────────────────────────────────────────────────
 function saveProgress() {
-    syncTimerSeconds(); // persist the live clock, not whatever the last tick rendered
+    // Fold in whatever another open copy of the game already saved, so this tab's
+    // snapshot can only ever add to it (see mergeStoredProgress). If that brought
+    // anything in, show it once the caller has finished its own screen updates.
     const h = getBoardHash();
+    if (mergeStoredProgress()) {
+        setTimeout(() => { if (getBoardHash() === h && !modeSwitchInFlight) showMergedProgress(); }, 0);
+    }
+    syncTimerSeconds(); // persist the live clock, not whatever the last tick rendered
     const won = validWords.size > 0 && foundWords.size >= validWords.size;
     localStorage.setItem(`G2_found_${h}`, JSON.stringify([...foundWords]));
     localStorage.setItem(`G2_events_${h}`, JSON.stringify(wordEvents));
@@ -1501,6 +1523,7 @@ function safeLoadJSON(key, fallback) {
 
 function loadProgress() {
     const h = getBoardHash();
+    progressResetSeen = { hash: h, stamp: readResetStamp(h) };
     foundWords = new Set(safeLoadJSON(`G2_found_${h}`, []));
     wordEvents = safeLoadJSON(`G2_events_${h}`, []);
     if (!Array.isArray(wordEvents)) wordEvents = [];
@@ -1532,6 +1555,101 @@ function loadProgress() {
     }
     timerLog('loadProgress');
 }
+
+// ── Several open copies of the same puzzle ─────────────────────────────────
+// Every open tab (or home-screen app) keeps its own copy of the progress in memory and
+// writes the whole thing back on each find, every 15s of clock, and whenever it's
+// hidden. An older copy left open used to write its stale snapshot straight over newer
+// progress made elsewhere: finish the puzzle in one tab, glance at an old tab, and the
+// finish was gone. Now every save first folds in what's already stored, and each tab
+// pulls in other tabs' progress as it lands and whenever it comes back into view.
+// Found words only ever accumulate. The one deliberate way to lose them is Reset, which
+// leaves a stamp so other tabs adopt the reset instead of merging the old words back.
+let progressResetSeen = { hash: null, stamp: null }; // the reset stamp this tab last loaded
+function readResetStamp(h) {
+    try { return localStorage.getItem(`G2_reset_${h}`); } catch { return null; }
+}
+// Merge the stored progress for the current board into memory. Never writes.
+// Returns true when anything in memory changed.
+function mergeStoredProgress() {
+    const h = getBoardHash();
+    const stamp = readResetStamp(h);
+    if (progressResetSeen.hash === h && stamp !== progressResetSeen.stamp) {
+        loadProgress();   // reset in another tab since this one loaded: take it as-is
+        return true;
+    }
+    let changed = false;
+    const addAll = (set, key) => {
+        const stored = safeLoadJSON(key, []);
+        if (!Array.isArray(stored)) return;
+        for (const v of stored) if (!set.has(v)) { set.add(v); changed = true; }
+    };
+    addAll(foundWords, `G2_found_${h}`);
+    addAll(foundBonusWords, `G2_bonus_found_${h}`);
+    addAll(hintsUsed, `G2_hints_used_${h}`);
+    // Timelines for the share chart: add entries this tab hasn't seen, keep time order.
+    const addEvents = (list, key, idOf) => {
+        const stored = safeLoadJSON(key, []);
+        if (!Array.isArray(stored)) return list;
+        const have = new Set(list.map(idOf));
+        const extra = stored.filter(e => e && !have.has(idOf(e)));
+        if (!extra.length) return list;
+        changed = true;
+        return list.concat(extra).sort((a, b) => (a?.t || 0) - (b?.t || 0));
+    };
+    wordEvents = addEvents(wordEvents, `G2_events_${h}`, e => e?.word);
+    hintEvents = addEvents(hintEvents, `G2_hintevents_${h}`, e => `${e?.type}@${e?.t}`);
+    if (!answersRevealed && localStorage.getItem(`G2_answers_${h}`) === '1') {
+        answersRevealed = true; changed = true;
+    }
+    // Clock: never go backwards from what another tab already recorded.
+    const saved = safeLoadJSON(`G2_timer_${h}`, {}) || {};
+    const storedSecs = Number(saved.s) || 0;
+    syncTimerSeconds();
+    if (storedSecs > timerSeconds) {
+        timerBaseMs = storedSecs * 1000;
+        if (timerRunSince) timerRunSince = Date.now();
+        timerSeconds = storedSecs;
+        changed = true;
+    }
+    if (saved.started && !timerStarted) {
+        // Started elsewhere: count it as started but hold it, so the next tap resumes it.
+        timerStarted = true; timerPaused = true; changed = true;
+    }
+    return changed;
+}
+// Show progress another tab saved. Runs when storage changes under us and when this
+// tab comes back into view (a frozen or cached tab can miss the storage events).
+function pullStoredProgress() {
+    if (roomMode || modeSwitchInFlight || !validWords.size) return;
+    if (mergeStoredProgress()) showMergedProgress();
+}
+function showMergedProgress() {
+    if (roomMode || !validWords.size) return;
+    // Finished (or answers shown) elsewhere: stop this tab's clock quietly, so returning
+    // to an old tab doesn't pop the share card as if it had just been won here.
+    const complete = foundWords.size >= validWords.size;
+    if ((complete || answersRevealed) && timerStarted && !timerPaused) {
+        timerPaused = true;
+        bankTimerElapsed();
+        stopTimerInterval();
+    }
+    updateTimerDisplay();
+    updateScoreUI();
+    updateTileHints();
+    updateAnswerRevealSection();
+    const popup = document.getElementById('word-popup');
+    if (popup && popup.style.display !== 'none') renderPopup();
+}
+let pullProgressTimer = null;
+window.addEventListener('storage', e => {
+    if (e.storageArea && e.storageArea !== localStorage) return;
+    // Only this board's keys matter (null key = storage was cleared).
+    if (e.key !== null && !e.key.endsWith('_' + getBoardHash())) return;
+    // One save writes several keys; react once, after the burst.
+    clearTimeout(pullProgressTimer);
+    pullProgressTimer = setTimeout(pullStoredProgress, 50);
+});
 
 // ── Daily puzzle browser ────────────────────────────────────────────────────
 function toggleBurgerMenu(e) {
@@ -2114,7 +2232,9 @@ function rotateBoard() {
         const oldRows = boardRows, oldCols = boardCols;
         const newCells = Array.from({length: oldCols}, (_, nr) =>
             Array.from({length: oldRows}, (_, nc) => boardCells[oldRows-1-nc]?.[nr] ?? null));
+        const keepHash = layoutHash(); // same save slot after turning (see getBoardHash)
         boardRows = oldCols; boardCols = oldRows; boardCells = newCells;
+        rotatedBoardPin = { cells: newCells, hash: keepHash };
         _rotateCanonicalPaths(oldRows, oldCols);
         clearPathUI();
         updateCellSize();
@@ -2435,7 +2555,8 @@ document.addEventListener('visibilitychange', () => {
         }
         return;
     }
-    if (document.hidden) pauseTimer(); else resumeTimer();
+    if (document.hidden) pauseTimer();
+    else { pullStoredProgress(); resumeTimer(); }   // catch up on other tabs' progress first
 });
 // Belt and braces. Android Chrome does not reliably deliver the *visible* half of that
 // pair (tab switcher, notification shade, split screen, bfcache restore), and nothing
@@ -2444,7 +2565,7 @@ document.addEventListener('visibilitychange', () => {
 // now re-checks; resumeTimer's own guards keep a won or answers-revealed board stopped.
 ['pointerdown', 'touchstart', 'keydown'].forEach(ev =>
     document.addEventListener(ev, () => { if (timerPaused) resumeTimer(); }, { capture: true, passive: true }));
-window.addEventListener('pageshow', () => { if (timerPaused) resumeTimer(); });
+window.addEventListener('pageshow', () => { pullStoredProgress(); if (timerPaused) resumeTimer(); });
 // Format seconds as MM:SS, or HH:MM:SS once it reaches an hour.
 function formatTime(totalSeconds) {
     const h = Math.floor(totalSeconds / 3600);
@@ -3105,6 +3226,14 @@ function calculateValidWords() {
 // ── Solo reset ─────────────────────────────────────────────────────────────
 function resetProgress() {
     const h = getBoardHash();
+    // Stamp the reset so other open tabs adopt it instead of merging their old words
+    // back in, and clear the stored lists so our own save below can't merge them back.
+    const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    try { localStorage.setItem(`G2_reset_${h}`, stamp); } catch {}
+    progressResetSeen = { hash: h, stamp };
+    localStorage.removeItem(`G2_found_${h}`);
+    localStorage.removeItem(`G2_bonus_found_${h}`);
+    localStorage.removeItem(`G2_timer_${h}`);
     foundWords.clear();
     wordEvents = [];
     hintEvents = [];
