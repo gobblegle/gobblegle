@@ -88,20 +88,28 @@
         }
         .field-input:focus { border-color: var(--primary); }
 
-        .dim-controls { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
-        .dim-ctrl { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; }
-        .dim-val { min-width: 22px; text-align: center; font-size: 1rem; font-weight: 700; color: var(--text); }
-        .dim-btn {
-            width: 28px; height: 28px; border: 1px solid var(--border);
-            border-radius: 6px; background: var(--bg); font-size: 1.1rem;
-            font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;
-        }
-        .dim-btn:hover { background: var(--cell-active); }
+        .grid-size { font-size: 0.88rem; font-weight: 600; color: var(--text-muted); }
+        .grid-size b { color: var(--text); }
 
         .hint { font-size: 0.8rem; color: var(--text-muted); line-height: 1.5; }
         .hint a { color: var(--primary); }
 
-        .table-wrap { overflow-x: auto; }
+        .table-wrap { overflow-x: auto; text-align: center; }
+        /* Frame hugs the table; the + (insert) and × (delete) buttons sit in the
+           margin around it, positioned by % so they line up with the row/column gaps. */
+        .grid-frame { position: relative; display: inline-block; margin: 28px 30px; text-align: left; vertical-align: top; }
+        .grid-ctrls { position: absolute; inset: 0; pointer-events: none; }
+        .grid-btn {
+            position: absolute; width: 20px; height: 20px; padding: 0; pointer-events: auto;
+            border: 1px solid var(--border); border-radius: 50%;
+            background: var(--surface); color: var(--primary);
+            font-size: 0.9rem; font-weight: 700; line-height: 1; font-family: inherit;
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+        }
+        .grid-btn:hover:not(:disabled) { background: var(--cell-active); border-color: var(--cell-border-active); }
+        .grid-btn.del { color: var(--text-muted); font-size: 0.85rem; }
+        .grid-btn.del:hover:not(:disabled) { color: var(--error); border-color: var(--error); }
+        .grid-btn:disabled { opacity: 0.3; cursor: default; }
         .editor-table { border-collapse: collapse; margin: 0 auto; }
         .editor-table td { padding: 3px; }
         .editor-table input {
@@ -364,23 +372,13 @@
 
     <div class="card">
         <div class="card-title">Grid</div>
-        <div class="dim-controls">
-            <div class="dim-ctrl">
-                Rows
-                <button class="dim-btn" onclick="adjustDim('rows',-1)">−</button>
-                <span class="dim-val" id="ed-rows">5</span>
-                <button class="dim-btn" onclick="adjustDim('rows',1)">+</button>
-            </div>
-            <div class="dim-ctrl">
-                Cols
-                <button class="dim-btn" onclick="adjustDim('cols',-1)">−</button>
-                <span class="dim-val" id="ed-cols">5</span>
-                <button class="dim-btn" onclick="adjustDim('cols',1)">+</button>
-            </div>
-        </div>
-        <div class="hint">Leave cells blank to create gaps. Type <b>-</b> in a cell to block it: it's saved as a gap, and New Word, Mixup and Fill Random never put a letter there. All letter cells must be connected (including diagonals).</div>
+        <div class="grid-size">Size: <b id="ed-size">5 rows × 5 columns</b></div>
+        <div class="hint">Use the <b>+</b> buttons around the grid to insert a row or column at that spot, and <b>×</b> to delete one (up to 10 × 10). Leave cells blank to create gaps. Type <b>-</b> in a cell to block it: it's saved as a gap, and New Word, Mixup and Fill Random never put a letter there. All letter cells must be connected (including diagonals).</div>
         <div class="table-wrap">
-            <table class="editor-table" id="editor-table"></table>
+            <div class="grid-frame">
+                <table class="editor-table" id="editor-table"></table>
+                <div class="grid-ctrls" id="grid-ctrls"></div>
+            </div>
         </div>
         <div style="font-size:0.85rem;font-weight:600;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between;gap:8px;">
             <span>Valid words: <span id="word-count" style="color:var(--primary)">—</span></span>
@@ -405,8 +403,17 @@
                 </label>
                 <button class="btn" id="bb-new-btn" onclick="bbNewWord()">New Word</button>
                 <button class="btn btn-sec" id="bb-mix-btn" onclick="bbMixup()" title="Same big word, new layout on the current grid size">Mixup</button>
+                <button class="btn btn-sec" id="ed-back-btn" onclick="edBack()" disabled title="Undo the last New Word, Mixup, Generate Random, Fill Random or Clear">← Back</button>
             </div>
-            <div id="bb-seed" style="font-size:0.82rem;color:var(--text-muted)">Big word: none</div>
+            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px">
+                <label style="display:flex;align-items:center;gap:8px;font-size:0.82rem;font-weight:600;color:var(--text-muted)">
+                    Big word
+                    <input type="text" id="bb-seed-input" class="field-input" style="width:190px;padding:7px 9px;text-transform:uppercase;font-weight:700;letter-spacing:0.04em;color:var(--primary)"
+                           autocomplete="off" spellcheck="false" placeholder="type one, or New Word" oninput="bbSeedTyped()"
+                           onkeydown="if(event.key==='Enter'){event.preventDefault();bbMixup();}">
+                </label>
+                <span id="bb-seed-note" style="font-size:0.78rem;font-weight:600"></span>
+            </div>
         </div>
         <div class="actions">
             <button class="btn btn-sec" onclick="generateRandom()">Generate Random</button>
@@ -1091,6 +1098,7 @@ function _updateSelectedDateLabel() {
 
 async function selectCalendarDay(dateStr, hasBoard) {
     edSelectedDate = dateStr;
+    _edClearHistory();   // ← Back history belongs to the board you were on
     _updateSelectedDateLabel();
     if (hasBoard) {
         await _loadDailyBoardIntoEditor(dateStr);
@@ -1184,8 +1192,10 @@ function testBoard() {
 
 // ── Editor Table ───────────────────────────────────────────────────────────
 function buildEditorTable(keepExisting, prefill) {
-    document.getElementById('ed-rows').textContent = editorRows;
-    document.getElementById('ed-cols').textContent = editorCols;
+    const sizeEl = document.getElementById('ed-size');
+    if (sizeEl) sizeEl.textContent =
+        `${editorRows} row${editorRows === 1 ? '' : 's'} × ${editorCols} column${editorCols === 1 ? '' : 's'}`;
+    _edRenderGridButtons();
 
     const table = document.getElementById('editor-table');
     const prev = {};
@@ -1253,14 +1263,72 @@ function buildEditorTable(keepExisting, prefill) {
     }
 }
 
-function adjustDim(dim, delta) {
-    if (dim === 'rows') editorRows = Math.max(1, Math.min(10, editorRows + delta));
-    else                editorCols = Math.max(1, Math.min(10, editorCols + delta));
-    buildEditorTable(true, null);
+// ── Insert / delete rows & columns anywhere (the + and × around the grid) ──
+const ED_MAX_DIM = 10;
+
+// Every tile's current text (letter, "-" or ""), as rows of columns.
+function _edGridValues() {
+    const table = document.getElementById('editor-table');
+    return Array.from({ length: editorRows }, (_, r) => Array.from({ length: editorCols }, (_, c) =>
+        table.querySelector(`input[data-r="${r}"][data-c="${c}"]`)?.value || ''));
+}
+function _edRebuildFrom(grid) {
+    buildEditorTable(false, grid);
+    clearStatus();
     scheduleWordCount();
+}
+function edInsertRow(at) {
+    if (editorRows >= ED_MAX_DIM) return;
+    const g = _edGridValues(); g.splice(at, 0, new Array(editorCols).fill(''));
+    editorRows++; _edRebuildFrom(g);
+}
+function edDeleteRow(at) {
+    if (editorRows <= 1) return;
+    const g = _edGridValues(); g.splice(at, 1);
+    editorRows--; _edRebuildFrom(g);
+}
+function edInsertCol(at) {
+    if (editorCols >= ED_MAX_DIM) return;
+    const g = _edGridValues(); for (const row of g) row.splice(at, 0, '');
+    editorCols++; _edRebuildFrom(g);
+}
+function edDeleteCol(at) {
+    if (editorCols <= 1) return;
+    const g = _edGridValues(); for (const row of g) row.splice(at, 1);
+    editorCols--; _edRebuildFrom(g);
+}
+
+// + on the left edge (rows) / top edge (columns) at every gap, including the
+// outside edges; × on the right of each row / below each column. Positioned by
+// percentage of the grid, so they line up even if drawn while the page is hidden.
+function _edRenderGridButtons() {
+    const box = document.getElementById('grid-ctrls');
+    if (!box) return;
+    box.innerHTML = '';
+    const R = editorRows, C = editorCols;
+    const add = (cls, text, title, css, onclick, disabled) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'grid-btn' + (cls ? ' ' + cls : '');
+        b.textContent = text; b.title = title; b.setAttribute('aria-label', title);
+        b.style.cssText = css; b.disabled = disabled; b.onclick = onclick;
+        box.appendChild(b);
+    };
+    const fullR = R >= ED_MAX_DIM, fullC = C >= ED_MAX_DIM;
+    for (let i = 0; i <= R; i++) add('', '+',
+        fullR ? 'Already 10 rows' : i === 0 ? 'Insert a row at the top' : i === R ? 'Insert a row at the bottom' : `Insert a row between rows ${i} and ${i + 1}`,
+        `left:-27px;top:calc(${i} * 100% / ${R} - 10px)`, () => edInsertRow(i), fullR);
+    for (let j = 0; j <= C; j++) add('', '+',
+        fullC ? 'Already 10 columns' : j === 0 ? 'Insert a column at the left' : j === C ? 'Insert a column at the right' : `Insert a column between columns ${j} and ${j + 1}`,
+        `top:-27px;left:calc(${j} * 100% / ${C} - 10px)`, () => edInsertCol(j), fullC);
+    for (let i = 0; i < R; i++) add('del', '×', R <= 1 ? 'Can’t delete the only row' : `Delete row ${i + 1}`,
+        `right:-27px;top:calc(${i + 0.5} * 100% / ${R} - 10px)`, () => edDeleteRow(i), R <= 1);
+    for (let j = 0; j < C; j++) add('del', '×', C <= 1 ? 'Can’t delete the only column' : `Delete column ${j + 1}`,
+        `bottom:-27px;left:calc(${j + 0.5} * 100% / ${C} - 10px)`, () => edDeleteCol(j), C <= 1);
 }
 
 function clearAll() {
+    if (_bbBusy) return;
+    if (_edGridValues().some(row => row.some(v => v))) _edPushHistory();   // ← Back can undo a Clear
     document.getElementById('editor-table').querySelectorAll('input')
         .forEach(inp => inp.value = '');
     _bbSetSeed(null);
@@ -2178,9 +2246,11 @@ function _edAllTilesUsed(cells, rows, cols) {
 }
 
 function fillRandom() {
+    if(_bbBusy) return;
     const trie=_edGetTrie();
     const blocked=_edBlockedMask();   // "-" tiles stay blocked
     if(blocked.every(Boolean)){ showStatus('Every tile is blocked with "-" — nothing to fill.', 'err'); return; }
+    _edPushHistory();                 // ← Back returns to the board before this fill
     for(let attempt=0; attempt<50; attempt++){
         const graph=_edBuildRectGraph(editorRows, editorCols, blocked);
         _edSeedAndFill(graph);
@@ -2198,6 +2268,7 @@ function fillRandom() {
 }
 
 function generateRandom() {
+    if(_bbBusy) return;
     const trie=_edGetTrie();
     for(let attempt=0; attempt<200; attempt++){
         const graph=_edGrowShape(_edGaussian(9,3));
@@ -2206,6 +2277,7 @@ function generateRandom() {
         if(trie && !_edValidateRepair(graph, trie)) continue;
         const board=_edToBoard(graph);
         if(edDict && !_edAllTilesUsed(board.cells, board.rows, board.cols)) continue;
+        _edPushHistory();             // ← Back returns to the board before this one
         editorRows=board.rows; editorCols=board.cols;
         _edAddedWords=[]; _resetPuzzleCustomizations(null); _bbSetSeed(null);
         buildEditorTable(false, board.cells);
@@ -2387,6 +2459,9 @@ const _BB_POOL = (() => {
 })();
 function _bbRandLetter() { return _BB_POOL[Math.random() * _BB_POOL.length | 0]; }
 
+// How far a board is from what was asked for: 0 = in the word-count range with
+// no grey tiles. Grey tiles count far more than word-count misses; a miss is the
+// distance to the range (too many words → fewer is closer; too few → more is).
 function _bbCost(ev, lo, hi) {
     const gap = ev.count < lo ? lo - ev.count : ev.count > hi ? ev.count - hi : 0;
     return ev.unused.length * 1000 + gap;
@@ -2431,23 +2506,13 @@ function _bbFill(seedGrid, R, C, trie, excluded, lo, hi, deadline, blocked) {
     return best;
 }
 
-// Full build for one word: tries fresh compact placements + fills until one
-// lands in range or time runs out. Returns { ok, reason, grid, ev, tiles, cost }.
-function _bbBuild(word, R, C, trie, excluded, lo, hi, timeMs = 3000, blocked = null) {
-    const start = Date.now(), deadline = start + timeMs;
-    let best = null, placedAny = false;
-    do {
-        const pl = _bbPlaceCompact(word, R, C, { blocked });
-        if (!pl) break;
-        placedAny = true;
-        // Give each placement a slice of time so Mixup-style variety is explored.
-        const sliceEnd = Math.min(deadline, Date.now() + Math.max(400, timeMs / 4));
-        const res = _bbFill(pl.grid, R, C, trie, excluded, lo, hi, sliceEnd, blocked);
-        if (!best || res.cost < best.cost) best = { ...res, tiles: pl.tiles };
-        if (best.cost === 0) break;
-    } while (Date.now() < deadline);
-    if (!placedAny) return { ok: false, reason: 'nofit', minTiles: _bbMinTiles(word) };
-    return { ok: best.cost === 0, reason: best.cost === 0 ? null : 'range', ...best };
+// One try for one word: a fresh (randomised) fewest-tiles placement, then up to
+// `sliceMs` of filling. Returns { nofit: true } or { grid, ev, cost, tiles }.
+function _bbAttempt(word, R, C, trie, excluded, lo, hi, sliceMs, blocked = null) {
+    const pl = _bbPlaceCompact(word, R, C, { blocked });
+    if (!pl) return { nofit: true };
+    const res = _bbFill(pl.grid, R, C, trie, excluded, lo, hi, Date.now() + sliceMs, blocked);
+    return { ...res, tiles: pl.tiles };
 }
 
 
@@ -2484,14 +2549,41 @@ function bbSaveSettings() {
 }
 
 function _bbSetSeed(w) { _bbSeed = w || null; _bbRenderSeed(); }
+
+// Typing in the Big word box sets the big word (letters only). Mixup / Enter
+// then builds around it.
+function bbSeedTyped() {
+    const inp = document.getElementById('bb-seed-input');
+    const clean = inp.value.replace(/[^a-z]/gi, '').toUpperCase();
+    if (inp.value.replace(/[^a-z]/gi, '') !== inp.value) inp.value = clean;   // drop spaces/digits
+    _bbSeed = clean || null;
+    if (db && !_bbUsed[_bbTrack()]) _bbWatchUsed(_bbTrack()).then(_bbRenderSeed).catch(() => {});
+    _bbRenderSeed();
+}
+
+// Another saved date (this track) that already uses `word` as its big word.
+function _bbUsedOn(word) {
+    const e = _bbUsed[_bbTrack()];
+    if (!e) return null;
+    for (const [date, w] of e.map) if (w === word && date !== edSelectedDate) return date;
+    return null;
+}
+
+// Keep the box showing the big word, with any warnings beside it.
 function _bbRenderSeed() {
-    const el = document.getElementById('bb-seed');
-    if (!el) return;
-    if (!_bbSeed) { el.textContent = 'Big word: none'; return; }
+    const inp = document.getElementById('bb-seed-input'), note = document.getElementById('bb-seed-note');
+    if (!inp || !note) return;
+    if (document.activeElement !== inp && inp.value.toUpperCase() !== (_bbSeed || '')) inp.value = _bbSeed || '';
+    if (!_bbSeed) { note.textContent = ''; return; }
+    const msgs = [];
+    if (edDict && !edDict.has(_bbSeed) && !edWordApprovals.has(_bbSeed)) msgs.push('not in the dictionary, so players can’t score it');
+    else if (edWordSelections.has(_bbSeed)) msgs.push('crossed out in the dictionary, so players can’t score it');
+    const usedOn = _bbUsedOn(_bbSeed);
+    if (usedOn) msgs.push(`already the big word on ${usedOn}`);
     const { cells } = readCells();
-    const onBoard = edCanSpell(_bbSeed, cells, editorRows, editorCols);
-    el.innerHTML = `Big word: <b style="color:var(--primary);letter-spacing:0.04em">${_bbSeed}</b>` +
-        (onBoard ? '' : ' <span style="color:var(--error);font-weight:600">— not on the board, so it won’t be recorded</span>');
+    if (!edCanSpell(_bbSeed, cells, editorRows, editorCols)) msgs.push('not on the board yet: press Mixup to build around it');
+    note.textContent = msgs.join(' · ');
+    note.style.color = 'var(--error)';
 }
 
 // The big word to store with a save: only if it's still spellable and in the puzzle.
@@ -2532,7 +2624,8 @@ function _bbGetTrie() {
 }
 
 function _bbButtons(enabled) {
-    for (const id of ['bb-new-btn', 'bb-mix-btn']) { const b = document.getElementById(id); if (b) b.disabled = !enabled; }
+    for (const id of ['bb-new-btn', 'bb-mix-btn', 'ed-back-btn']) { const b = document.getElementById(id); if (b) b.disabled = !enabled; }
+    if (enabled) _edRenderBackBtn();   // Back stays off when there's nothing to go back to
 }
 
 function _bbReadRanges() {
@@ -2568,8 +2661,16 @@ async function bbNewWord() {
             pool.push(w);
         }
         if (!pool.length) { showStatus(`No unused ${_bbRangeText(ranges.lenR)}-letter words left.`, 'err'); return; }
-        _bbSetSeed(pool[Math.random() * pool.length | 0]);
-        await _bbBuildAndApply(ranges.cntR);
+        const shape = _bbShapeCheck(); if (!shape) return;
+        showStatus(`Looking for a big word that fits ${shape.where}…`, 'info');
+        const { best, tries, words, checked } = await _bbSearch('new', null, pool, ranges.cntR, shape);
+        if (!best) {
+            showStatus(`None of the ${checked.toLocaleString()} unused ${_bbRangeText(ranges.lenR)}-letter words I checked fit ${shape.where}. Open up more tiles, or try a shorter big word length.`, 'err');
+            return;
+        }
+        _edPushHistory();
+        _bbSetSeed(best.word);
+        _bbApply(best, shape, ranges.cntR, tries, words);
     } finally { _bbBusy = false; _bbButtons(true); }
 }
 
@@ -2578,9 +2679,101 @@ async function bbMixup() {
     if (!_bbSeed) { showStatus('Press New Word first to pick a big word.', 'info'); return; }
     if (!edDict) { showStatus('Dictionary is still loading — try again in a moment.', 'info'); return; }
     const ranges = _bbReadRanges(); if (!ranges) return;
+    const shape = _bbShapeCheck(); if (!shape) return;
     _bbBusy = true; _bbButtons(false);
-    try { await _bbBuildAndApply(ranges.cntR); }
-    finally { _bbBusy = false; _bbButtons(true); }
+    try {
+        showStatus(`Trying layouts of ${_bbSeed} in ${shape.where}…`, 'info');
+        const { best, tries } = await _bbSearch('mixup', _bbSeed, null, ranges.cntR, shape);
+        if (!best) {
+            _bbRenderSeed();
+            showStatus(`${_bbSeed} won't fit in ${shape.where}. Open up more tiles and press Mixup, or press New Word for a different word.`, 'err');
+            return;
+        }
+        _edPushHistory();
+        _bbApply(best, shape, ranges.cntR, tries, 0);
+    } finally { _bbBusy = false; _bbButtons(true); }
+}
+
+// ── Search: try many boards, keep the first in range (or the closest miss) ──
+const BB_MIXUP_MS      = 4000;  // Mixup keeps trying layouts for up to this long
+const BB_NEWWORD_MS    = 6000;  // New Word keeps trying words + layouts this long
+const BB_SLICE_MS      = 300;   // one placement + fill try
+const BB_TRIES_PER_WORD = 2;    // New Word: layouts per word before the next word
+
+// Shape checks shared by both buttons, captured at the start so the result
+// lands on the grid it was built for. Returns null (after a message) if unusable.
+function _bbShapeCheck() {
+    const R = editorRows, C = editorCols, blocked = _edBlockedMask();
+    const open = blocked.filter(b => !b).length;
+    if (!open) { showStatus('Every tile is blocked with "-" — nothing to build on.', 'err'); return null; }
+    if (!_bbOpenTilesConnected(blocked, R, C)) {
+        showStatus('The open tiles (the ones without a "-") need to all touch each other, diagonals included.', 'err');
+        return null;
+    }
+    const shaped = open < R * C;
+    return { R, C, blocked, mask: shaped ? blocked : null, open, where: shaped ? `this ${R}×${C} shape` : `${R}×${C}` };
+}
+
+// kind 'mixup': keep trying fresh layouts of `fixedWord`.
+// kind 'new': walk a shuffled `pool`, giving each word that could fit a couple
+// of layouts. Stops at the FIRST board in the word-count range with no grey
+// tiles; otherwise, when time runs out, returns the closest miss.
+async function _bbSearch(kind, fixedWord, pool, cntR, shape) {
+    const { R, C, mask, open } = shape, trie = _bbGetTrie();
+    const deadline = Date.now() + (kind === 'new' ? BB_NEWWORD_MS : BB_MIXUP_MS);
+    const queue = kind === 'new' ? _bbShuffle(pool.slice()) : null;
+    const fits = [];                              // New Word: words that did fit, for more tries
+    let best = null, tries = 0, words = 0, checked = 0, left = 0;
+    let word = kind === 'new' ? null : fixedWord;
+    await new Promise(r => setTimeout(r, 30));   // let the starting status paint
+    while (Date.now() < deadline) {
+        if (kind === 'new' && left <= 0) {
+            word = null;
+            while (queue.length) {                // skip words that need more tiles than are open
+                const w = queue.pop(); checked++;
+                if (_bbMinTiles(w) <= open) { word = w; words++; break; }
+            }
+            // Every word checked: spend the remaining time on the ones that fit.
+            if (!word && fits.length) word = fits[Math.random() * fits.length | 0];
+            if (!word) break;
+            left = BB_TRIES_PER_WORD;
+        }
+        const res = _bbAttempt(word, R, C, trie, edWordSelections, cntR.lo, cntR.hi, BB_SLICE_MS, mask);
+        left--;
+        if (res.nofit) { if (kind === 'mixup') break; left = 0; continue; }
+        if (kind === 'new' && !fits.includes(word)) fits.push(word);
+        tries++;
+        if (!best || res.cost < best.cost) best = { ...res, word };
+        if (best.cost === 0) break;
+        const g = best.ev.unused.length;
+        showStatus(`Searching… ${_bbTriedText(tries, words)}. Closest so far: ${best.word}, ${best.ev.count} words${g ? `, ${g} grey` : ''}.`, 'info');
+        await new Promise(r => setTimeout(r, 0)); // keep the page responsive
+    }
+    return { best, tries, words, checked };
+}
+
+// "7 tries" / "7 tries across 4 words" (word count only when more than one).
+function _bbTriedText(tries, words) {
+    return `${tries} ${tries === 1 ? 'try' : 'tries'}${words > 1 ? ` across ${words} words` : ''}`;
+}
+
+function _bbApply(best, shape, cntR, tries, words) {
+    const { R, C, blocked } = shape;
+    editorRows = R; editorCols = C;            // in case the grid was resized mid-search
+    // Blocked tiles go back in as "-" so the shape is kept for the next Mixup.
+    const cells = Array.from({ length: R }, (_, r) => Array.from({ length: C }, (_, c) =>
+        blocked[r * C + c] ? '-' : best.grid[r * C + c]));
+    _edAddedWords = []; _resetPuzzleCustomizations(null);
+    buildEditorTable(false, cells);
+    updateWordCount();
+    const n = best.ev.count, grey = best.ev.unused.length;
+    const tried = _bbTriedText(tries, words);
+    if (best.cost === 0)
+        showStatus(`${best.word}: ${n} words, every tile used (found after ${tried}). Mixup for another layout, or Save Board.`, 'ok');
+    else if (grey)
+        showStatus(`Closest after ${tried}: ${best.word} with ${n} words, but ${grey} grey tile${grey > 1 ? 's' : ''}. Press again to keep looking, or change the grid.`, 'err');
+    else
+        showStatus(`Nothing hit ${_bbRangeText(cntR)} words after ${tried}. Closest: ${best.word} with ${n} words. Press again to keep looking, or change the grid.`, 'err');
 }
 
 // Open (non "-") tiles must all touch each other (diagonals count), or the
@@ -2594,35 +2787,37 @@ function _bbOpenTilesConnected(blocked, R, C) {
     return seen.size === open.length;
 }
 
-async function _bbBuildAndApply(cntR) {
-    const word = _bbSeed, R = editorRows, C = editorCols;
-    const target = _bbRangeText(cntR);
-    const blocked = _edBlockedMask();
-    const shaped = blocked.some(Boolean);
-    const where = shaped ? `this ${R}×${C} shape` : `${R}×${C}`;
-    if (!blocked.some(b => !b)) { showStatus('Every tile is blocked with "-" — nothing to build on.', 'err'); return; }
-    if (!_bbOpenTilesConnected(blocked, R, C)) {
-        showStatus('The open tiles (the ones without a "-") need to all touch each other, diagonals included.', 'err');
-        return;
-    }
-    showStatus(`Building ${shaped ? 'a custom-shaped' : `a ${R}×${C}`} board around ${word}…`, 'info');
-    await new Promise(r => setTimeout(r, 30));   // let the status paint before the busy loop
-    const res = _bbBuild(word, R, C, _bbGetTrie(), edWordSelections, cntR.lo, cntR.hi, 3000, shaped ? blocked : null);
-    if (res.reason === 'nofit') {
-        _bbRenderSeed();
-        showStatus(`${word} won't fit in ${where}. Open up more tiles and press Mixup, or press New Word for a different word.`, 'err');
-        return;
-    }
-    // Blocked tiles go back in as "-" so the shape is kept for the next Mixup.
-    const cells = Array.from({ length: R }, (_, r) => Array.from({ length: C }, (_, c) =>
-        blocked[r * C + c] ? '-' : res.grid[r * C + c]));
-    _edAddedWords = []; _resetPuzzleCustomizations(null);
-    buildEditorTable(false, cells);
+// ── ← Back: undo the last New Word / Mixup / Generate Random / Fill Random / Clear ──
+// A stack of board snapshots taken just before each of those changes the board.
+// Switching dates (or Daily/Mini) starts a fresh history.
+const ED_HISTORY_MAX = 30;
+var _edHistory = [];   // var: selectCalendarDay may clear it during startup
+function _edPushHistory() {
+    _edHistory.push({
+        rows: editorRows, cols: editorCols, cells: _edGridValues(), seed: _bbSeed,
+        removed: [..._edPuzzleRemoved], included: [..._edPuzzleIncluded],
+        custom: _edPuzzleCustom.slice(), added: _edAddedWords.slice(),
+    });
+    if (_edHistory.length > ED_HISTORY_MAX) _edHistory.shift();
+    _edRenderBackBtn();
+}
+function _edClearHistory() { _edHistory = []; _edRenderBackBtn(); }
+function _edRenderBackBtn() {
+    const b = document.getElementById('ed-back-btn');
+    if (b && !_bbBusy) b.disabled = !_edHistory.length;
+}
+function edBack() {
+    if (_bbBusy || !_edHistory.length) return;
+    const s = _edHistory.pop();
+    editorRows = s.rows; editorCols = s.cols;
+    _edPuzzleRemoved = new Set(s.removed); _edPuzzleIncluded = new Set(s.included);
+    _edPuzzleCustom = s.custom.slice(); _edAddedWords = s.added.slice();
+    buildEditorTable(false, s.cells);
+    _bbSetSeed(s.seed);
     updateWordCount();
-    const n = res.ev.count, grey = res.ev.unused.length;
-    if (res.ok) showStatus(`${word}: ${n} words, every tile used. Mixup for a new layout, or Save Board.`, 'ok');
-    else if (grey) showStatus(`Best try left ${grey} grey tile${grey > 1 ? 's' : ''} (${n} words). Press Mixup to try again, or change the grid size.`, 'err');
-    else showStatus(`Couldn't hit ${target} words with ${word} in ${where} — closest is ${n}. Press Mixup to try again, change the grid, or New Word.`, 'err');
+    const more = _edHistory.length;
+    showStatus(`Back to the previous board.${more ? ` (${more} more step${more === 1 ? '' : 's'} back available.)` : ''}`, 'info');
+    _edRenderBackBtn();
 }
 
 bbLoadSettings();
