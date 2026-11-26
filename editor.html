@@ -300,10 +300,17 @@
         .bt-words td.bt-n { color: var(--text-muted); font-weight: 700; font-size: 0.78rem; width: 32px; }
         .bt-words td.bt-w { text-align: left; }
         .bt-words th.bt-w { text-align: left; }
+        /* Width is set from the longest word (see _btSizeWordInputs) so every word shows in full. */
         .bt-words input.field-input {
-            max-width: 230px; padding: 6px 8px; text-transform: uppercase;
+            min-width: 120px; padding: 6px 8px; text-transform: uppercase;
             font-weight: 700; letter-spacing: 0.04em; color: var(--primary);
         }
+        .bt-words td.bt-fitcell { padding-left: 3px; padding-right: 3px; }
+        .bt-words td.bt-len { font-weight: 700; color: var(--text-muted); width: 56px; }
+        .bt-words td.bt-btns { white-space: nowrap; }
+        /* While a board is being built: buttons dim but stay put (no focus/scroll jumps). */
+        #batch-view.bt-busy .bt-act, #batch-view.bt-busy #bt-track button { opacity: 0.55; cursor: progress; }
+        .bt-card:focus { outline: none; }
         .bt-wnote { display: block; font-size: 0.72rem; color: var(--error); font-weight: 600; margin-top: 2px; }
         .bt-fit {
             display: inline-flex; width: 30px; height: 24px; border-radius: 6px;
@@ -319,8 +326,10 @@
         }
         .bt-reroll:hover:not(:disabled) { background: var(--cell-active); border-color: var(--cell-border-active); }
         .bt-reroll:disabled { opacity: 0.4; cursor: default; }
+        .bt-reroll.bt-rm { color: var(--text-muted); font-size: 0.9rem; margin-left: 4px; }
+        .bt-reroll.bt-rm:hover { color: var(--error); border-color: var(--error); background: var(--surface); }
 
-        .bt-boards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
+        .bt-boards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(330px, 100%), 1fr)); gap: 14px; }
         .bt-card {
             border: 2px solid var(--border); border-radius: 12px; padding: 12px;
             display: flex; flex-direction: column; gap: 6px; background: var(--bg); min-width: 0;
@@ -330,6 +339,7 @@
         .bt-card-head { display: flex; align-items: center; gap: 8px; }
         .bt-num { font-size: 0.78rem; color: var(--text-muted); font-weight: 700; }
         .bt-word { font-weight: 800; letter-spacing: 0.04em; color: var(--primary); flex: 1; overflow-wrap: anywhere; }
+        .bt-wlen { font-weight: 700; letter-spacing: 0; color: var(--text-muted); white-space: nowrap; }
         .bt-count { font-weight: 800; font-size: 0.82rem; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
         .bt-count.good { background: #dcfce7; color: #166534; }
         .bt-count.bad  { background: #fee2e2; color: #991b1b; }
@@ -361,6 +371,57 @@
         .bt-date { width: 130px; flex-shrink: 0; font-weight: 700; }
         .bt-date-word { flex: 1; font-weight: 700; color: var(--primary); letter-spacing: 0.03em; overflow-wrap: anywhere; }
         .bt-date-tag { font-size: 0.72rem; font-weight: 700; color: var(--error); }
+
+        /* ── Phones ── */
+        @media (max-width: 600px) {
+            /* Logo + badge move left so the moon button never covers "Board Editor". */
+            header { justify-content: flex-start; padding-right: 62px; gap: 8px; }
+            .editor-badge { font-size: 0.68rem; letter-spacing: 0.04em; padding: 3px 6px; white-space: nowrap; }
+            .header-title img { height: 32px; }
+
+            #batch-view .card { padding: 16px 14px; }
+
+            /* Big words table: each word gets two lines so nothing hides off the right edge.
+                 line 1:  #   [ BIG WORD ]   ↻ ×
+                 line 2:      12 letters   3×3 ✓   3×4 ✓   4×4 ✓            */
+            .bt-words thead { display: none; }
+            .bt-words, .bt-words tbody { display: block; }
+            .bt-words tr {
+                display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 3px;
+                padding: 8px 0; border-bottom: 1px solid var(--border);
+            }
+            .bt-words tr::after { content: ''; flex-basis: 100%; order: 2; }
+            .bt-words td { border-bottom: none; padding: 0; }
+            .bt-words td.bt-n { order: 1; width: 20px; text-align: left; }
+            .bt-words td.bt-w { order: 1; flex: 1; min-width: 0; }
+            .bt-words td.bt-btns { order: 1; }
+            .bt-words input.field-input { min-width: 0; max-width: 100%; }
+            .bt-words td.bt-len { order: 3; width: auto; margin-left: 28px; margin-right: 4px; font-size: 0.78rem; }
+            .bt-words td.bt-len::after { content: ' letters'; font-weight: 600; }
+            .bt-words td.bt-fitcell {
+                order: 3; display: flex; align-items: center; gap: 3px; padding: 0;
+                font-size: 0.7rem; font-weight: 700; color: var(--text-muted);
+            }
+            .bt-words td.bt-fitcell::before { content: attr(data-size); }
+            .bt-fit { width: 26px; height: 22px; }
+            .bt-reroll { width: 34px; height: 34px; }
+
+            /* Boards: a little more room so a 5-wide grid fits on a 360px phone.
+               (Wider grids scroll sideways inside their own card; the page stays put.)
+               Grid margin must stay ≥ 27px: the +/× buttons sit 27px outside the grid. */
+            .bt-card { padding: 10px 8px; }
+            .bt-card .grid-frame { margin: 28px; }
+
+            /* Push list: date + word count on top, the big word on its own line underneath. */
+            .bt-date-row { flex-wrap: wrap; row-gap: 2px; padding: 7px 10px; }
+            .bt-date { width: auto; flex: 1; }
+            .bt-date-word { order: 2; flex-basis: 100%; }
+            .bt-date-tag { order: 3; }
+        }
+        @media (max-width: 340px) {
+            .header-title img { height: 27px; }
+            .editor-badge { font-size: 0.62rem; }
+        }
     </style>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
@@ -564,7 +625,7 @@
             </div>
             <div class="bt-row">
                 <label class="bt-field">How many puzzles
-                    <input type="number" id="bt-count" class="field-input" min="1" max="60" onchange="btSetField('count', this.value)">
+                    <input type="number" id="bt-count" class="field-input" min="1" max="60" oninput="if (this.value) btSetField('count', this.value)" onchange="btSetField('count', this.value)">
                 </label>
                 <label class="bt-field">Big word length
                     <input type="text" id="bt-len" class="field-input" autocomplete="off" spellcheck="false" placeholder="9+" onchange="btSetField('len', this.value)">
@@ -3125,7 +3186,7 @@ async function btInit() {
 function _btWatchTrack() {
     if (!db || !bt) return;
     const t = bt.track;
-    _bbWatchUsed(t).then(() => { _btUsedLoaded.add(t); if (bt.track === t) { btRenderWords(); btRenderPush(); } }).catch(() => {});
+    _bbWatchUsed(t).then(() => { _btUsedLoaded.add(t); if (bt.track === t) { _btUpdateWordRows(); btRenderPush(); } }).catch(() => {});
     _btFetchDates().catch(() => {});
 }
 async function _btFetchDates() {
@@ -3145,16 +3206,19 @@ function btRenderAll() {
     btRenderSetup(); btRenderWords(); btRenderBoards(); btRenderReview(); btRenderPush();
 }
 
+// Busy = a build/search/push is running. Buttons only DIM (every handler checks
+// _btBusy and does nothing): disabling or removing the button that was just
+// clicked drops its focus, and some browsers then jump the page to the top.
 function _btSetBusy(on) {
     _btBusy = on;
-    document.querySelectorAll('#batch-view .bt-act').forEach(b => { b.disabled = on || b.dataset.off === '1'; });
-    document.querySelectorAll('#bt-track button').forEach(b => { b.disabled = on; });
+    $bt('batch-view').classList.toggle('bt-busy', on);
+    document.querySelectorAll('#bt-words input').forEach(i => { i.readOnly = on; });
 }
 function _btBtn(text, cls, onclick, off, title) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = cls + ' bt-act'; b.textContent = text;
     if (title) b.title = title;
-    b.dataset.off = off ? '1' : ''; b.disabled = _btBusy || !!off; b.onclick = onclick;
+    b.disabled = !!off; b.onclick = onclick;
     return b;
 }
 
@@ -3168,13 +3232,13 @@ function _btRanges() {
 
 // ── 1 · Setup ───────────────────────────────────────────────────────────────
 function btRenderSetup() {
-    document.querySelectorAll('#bt-track button').forEach(b => {
-        b.classList.toggle('active', b.dataset.t === bt.track); b.disabled = _btBusy;
-    });
+    document.querySelectorAll('#bt-track button').forEach(b => b.classList.toggle('active', b.dataset.t === bt.track));
     $bt('bt-count').value = bt.count;
     $bt('bt-len').value = bt.len;
     $bt('bt-range').value = bt.range;
     $bt('bt-reset-btn').style.display = bt.items.length ? '' : 'none';
+    // Each press picks this many MORE (the list can grow to as many as you like).
+    $bt('bt-pick-btn').textContent = bt.items.length ? `Pick ${bt.count} more` : `Pick ${bt.count} word${_btS(bt.count)}`;
 }
 function btSetField(name, value) {
     if (!bt) return;
@@ -3224,27 +3288,45 @@ async function btPickWords() {
     const say = (m, t) => _btStatus('bt-setup-status', m, t);
     if (!edDict) { say('The dictionary is still loading. Try again in a moment.', 'info'); return; }
     const r = _btRanges(); if (r.err) { say(r.err, 'err'); return; }
-    const n = bt.count, have = bt.items.length;
-    if (n === have) { say(`You already have ${n} words. Change "How many puzzles" to add or remove some, or press ↻ on a word to swap it.`, 'info'); return; }
-    if (n < have) {
-        const drop = bt.items.slice(n), withBoards = drop.filter(it => it.state !== 'none').length;
-        if (!confirm(`Remove the last ${drop.length} puzzle${_btS(drop.length)} (#${n + 1}${drop.length > 1 ? `–#${have}` : ''})${withBoards ? `, including ${withBoards} built board${_btS(withBoards)}` : ''}?`)) {
-            bt.count = have; btRenderSetup(); return;
-        }
-        bt.items.length = n;
-        _btSaveNow(); btRenderAll(); say(`Removed ${drop.length}. ${n} left.`, 'ok');
-        return;
-    }
+    const need = bt.count, have = bt.items.length;
     _btSetBusy(true);
     try {
         say('Checking which big words are already used…', 'info');
         if (!(await _btEnsureUsed(say))) return;
-        const pool = _bbShuffle(_btPool(r.lenR)), need = n - have;
+        const pool = _bbShuffle(_btPool(r.lenR));
         if (pool.length < need) { say(`Only ${pool.length} unused ${_bbRangeText(r.lenR)}-letter words are left. Lower "How many puzzles" or change the big word length.`, 'err'); return; }
         for (let i = 0; i < need; i++) bt.items.push(_btNewItem(pool[i]));
-        say(have ? `Added ${need} more word${_btS(need)}.` : `Picked ${need} word${_btS(need)}. Swap any you don't like, then press Build.`, 'ok');
+        const total = bt.items.length;
+        say(have ? `Added ${need} more word${_btS(need)} (${total} in all).` : `Picked ${need} word${_btS(need)}. Swap any you don't like, then press Build.`, 'ok');
     } finally { _btSetBusy(false); }
     _btSaveNow(); btRenderAll(); _btComputeFits();
+}
+
+// × on a table row: drop that puzzle (and its board) from the batch.
+function btRemoveItem(id) {
+    const it = _btItem(id); if (!it || _btBusy) return;
+    if (it.state !== 'none' && !confirm(`Remove ${_btNum(it)} ${it.word} and its board from this batch? Nothing on the calendar changes.`)) return;
+    bt.items = bt.items.filter(x => x !== it);
+    document.querySelector(`#bt-words tr[data-id="${id}"]`)?.remove();
+    document.querySelector(`.bt-card[data-id="${id}"]`)?.remove();
+    if (!bt.items.length) { _btSaveNow(); btRenderAll(); return; }
+    _btRenumber(); _btUpdateWordRows(); _btUpdateBuildBtn(); _btShowBoardSections(); btRenderSetup();
+    _btAfterBoardChange();
+}
+// After a removal: fix the #1, #2… labels in place.
+function _btRenumber() {
+    bt.items.forEach((it, i) => {
+        const tr = document.querySelector(`#bt-words tr[data-id="${it.id}"]`);
+        if (tr) {
+            tr.querySelector('.bt-n').textContent = i + 1;
+            tr.querySelector('input').setAttribute('aria-label', `Big word for puzzle ${i + 1}`);
+            const [rb, xb] = tr.querySelectorAll('.bt-reroll');
+            rb?.setAttribute('aria-label', `Pick a different word for puzzle ${i + 1}`);
+            xb?.setAttribute('aria-label', `Remove puzzle ${i + 1}`);
+        }
+        const num = document.querySelector(`.bt-card[data-id="${it.id}"] .bt-num`);
+        if (num) num.textContent = `#${i + 1}`;
+    });
 }
 
 // ── 2 · Big words table (fit checks) ────────────────────────────────────────
@@ -3279,6 +3361,9 @@ function _btRenderFitCells(word) {
         if (tr) tr.querySelectorAll('.bt-fit').forEach((el, k) => _btFitEl(el, f ? f[k] : null));
     }
 }
+// After the clicked control is redrawn, keep focus on something that stays put
+// (the card itself), so the browser has no reason to scroll.
+function _btKeepFocus(el) { try { el?.focus({ preventScroll: true }); } catch {} }
 function _btWordWarnings(it) {
     const w = it.word, out = [];
     if (edDict && !edDict.has(w) && !edWordApprovals.has(w)) out.push("not in the dictionary, so players can't score it");
@@ -3288,13 +3373,16 @@ function _btWordWarnings(it) {
     if (bt.items.some(o => o !== it && o.word === w)) out.push('used twice in this batch');
     return out;
 }
+// Full redraw of the table: only when rows are added / removed / reset.
+// Word changes update their row in place (_btUpdateWordRows) so the page
+// never shifts under you.
 function btRenderWords() {
     $bt('bt-words-card').style.display = bt.items.length ? '' : 'none';
     const tb = $bt('bt-words');
     tb.innerHTML = '';
     if (!bt.items.length) return;
     const head = document.createElement('tr');
-    ['#', 'Big word', ...BT_SIZES.map(([R, C]) => `${R}×${C}`), ''].forEach((t, i) => {
+    ['#', 'Big word', 'Letters', ...BT_SIZES.map(([R, C]) => `${R}×${C}`), ''].forEach((t, i) => {
         const th = document.createElement('th'); th.textContent = t; if (i === 1) th.className = 'bt-w'; head.appendChild(th);
     });
     const thead = document.createElement('thead'); thead.appendChild(head);
@@ -3305,36 +3393,85 @@ function btRenderWords() {
         const wtd = document.createElement('td'); wtd.className = 'bt-w';
         const inp = document.createElement('input');
         inp.type = 'text'; inp.className = 'field-input bt-act'; inp.value = it.word;
-        inp.spellcheck = false; inp.autocomplete = 'off'; inp.disabled = _btBusy;
+        inp.spellcheck = false; inp.autocomplete = 'off'; inp.readOnly = _btBusy;
         inp.setAttribute('aria-label', `Big word for puzzle ${i + 1}`);
         inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } };
+        const len = document.createElement('td'); len.className = 'bt-len';
+        inp.oninput = () => { len.textContent = inp.value.replace(/[^a-z]/gi, '').length; _btSizeWordInputs(); };
         inp.onchange = () => btTypeWord(it.id, inp.value);
         wtd.appendChild(inp);
-        const warn = _btWordWarnings(it);
-        if (warn.length) { const s = document.createElement('span'); s.className = 'bt-wnote'; s.textContent = warn.join(' · '); wtd.appendChild(s); }
-        tr.append(n, wtd);
-        const f = _btFitCache.get(it.word);
-        BT_SIZES.forEach((_, k) => {
+        tr.append(n, wtd, len);
+        BT_SIZES.forEach(([R, C]) => {
             const td = document.createElement('td'), s = document.createElement('span');
-            _btFitEl(s, f ? f[k] : null); td.appendChild(s); tr.appendChild(td);
+            td.className = 'bt-fitcell'; td.dataset.size = `${R}×${C}`;   // label shown beside the mark on phones
+            s.className = 'bt-fit'; td.appendChild(s); tr.appendChild(td);
         });
-        const rtd = document.createElement('td');
+        const rtd = document.createElement('td'); rtd.className = 'bt-btns';
         const rb = _btBtn('↻', 'bt-reroll', () => btReroll(it.id), false, 'Pick a different word');
         rb.setAttribute('aria-label', `Pick a different word for puzzle ${i + 1}`);
-        rtd.appendChild(rb); tr.appendChild(rtd);
+        const xb = _btBtn('×', 'bt-reroll bt-rm', () => btRemoveItem(it.id), false, 'Remove this puzzle from the batch');
+        xb.setAttribute('aria-label', `Remove puzzle ${i + 1}`);
+        rtd.append(rb, xb); tr.appendChild(rtd);
         body.appendChild(tr);
     });
     tb.append(thead, body);
+    _btUpdateWordRows();
+    _btUpdateBuildBtn();
+}
+// Refresh every row's word, warnings and fit marks without rebuilding the rows.
+function _btUpdateWordRows() {
+    for (const it of bt.items) {
+        const tr = document.querySelector(`#bt-words tr[data-id="${it.id}"]`);
+        if (!tr) continue;
+        const inp = tr.querySelector('input');
+        if (inp.value.toUpperCase() !== it.word && document.activeElement !== inp) inp.value = it.word;
+        tr.querySelector('.bt-len').textContent = it.word.length;
+        const warn = _btWordWarnings(it);
+        let note = tr.querySelector('.bt-wnote');
+        if (warn.length) {
+            if (!note) { note = document.createElement('span'); note.className = 'bt-wnote'; inp.after(note); }
+            note.textContent = warn.join(' · ');
+        } else note?.remove();
+        const f = _btFitCache.get(it.word);
+        tr.querySelectorAll('.bt-fit').forEach((el, k) => _btFitEl(el, f ? f[k] : null));
+    }
+    _btSizeWordInputs();
+}
+function _btUpdateBuildBtn() {
     const todo = bt.items.filter(it => it.state === 'none').length;
     const bb = $bt('bt-build-btn');
     bb.style.display = todo ? '' : 'none';
     bb.textContent = todo === bt.items.length ? `Build ${todo} board${_btS(todo)}` : `Build ${todo} new board${_btS(todo)}`;
     $bt('bt-build-note').textContent = todo ? '' : "All boards are built. They're below.";
 }
+// Every big word box gets the width of the longest word, measured in the box's
+// own font, so no word is ever cut off. (On a phone each row splits into two
+// lines instead, see the "Phones" styles.)
+let _btMeasureCtx = null;
+function _btSizeWordInputs() {
+    const inputs = [...document.querySelectorAll('#bt-words input')];
+    if (!inputs.length) return;
+    const cs = getComputedStyle(inputs[0]);
+    if (!_btMeasureCtx) _btMeasureCtx = document.createElement('canvas').getContext('2d');
+    _btMeasureCtx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const ls = parseFloat(cs.letterSpacing) || 0;
+    const extra = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth) + 8;
+    let w = 0;
+    for (const inp of inputs) {
+        const t = inp.value.toUpperCase();
+        w = Math.max(w, _btMeasureCtx.measureText(t).width + ls * t.length);
+    }
+    const px = Math.ceil(w + extra) + 'px';
+    for (const inp of inputs) inp.style.width = px;
+}
 async function btTypeWord(id, value) {
     const it = _btItem(id); if (!it) return;
     const w = String(value).replace(/[^a-z]/gi, '').toUpperCase();
-    if (!w || w === it.word || _btBusy) { btRenderWords(); return; }
+    if (!w || w === it.word || _btBusy) {
+        const inp = document.querySelector(`#bt-words tr[data-id="${id}"] input`);
+        if (inp) inp.value = it.word;
+        _btUpdateWordRows(); return;
+    }
     await _btChangeWord(it, w);
 }
 async function btReroll(id) {
@@ -3355,13 +3492,13 @@ async function _btChangeWord(it, w) {
     it.word = w;
     if (snap) {
         const r = _btRanges();
-        if (r.err) { _btStatus('bt-words-status', r.err, 'err'); it.word = snap.word; btRenderWords(); return; }
+        if (r.err) { _btStatus('bt-words-status', r.err, 'err'); it.word = snap.word; _btUpdateWordRows(); return; }
         _btSetBusy(true);
         try { if (await _btBuildOne(it, 'fresh', r.cntR)) _btPushHist(it, snap); }
         finally { _btSetBusy(false); }
         btRenderCard(it);
     }
-    _btSaveNow(); btRenderWords(); _btComputeFits(); _btAfterBoardChange();
+    _btSaveNow(); _btUpdateWordRows(); _btUpdateBuildBtn(); _btComputeFits(); _btAfterBoardChange();
 }
 
 // ── 3 · Boards ──────────────────────────────────────────────────────────────
@@ -3449,7 +3586,7 @@ async function btBuildAll() {
             btRenderCard(it); _btOkCount(); _btSave();
         }
     } finally { _btSetBusy(false); }
-    btRenderWords();
+    _btUpdateBuildBtn();
     const size = BT_START[bt.track].join('×');
     say(`Built ${todo.length} board${_btS(todo.length)}.${nofit ? ` ${nofit} big word${_btS(nofit)} didn't fit ${size}; ${nofit > 1 ? 'those boards say' : 'that board says'} so below.` : ''} Scroll down to check them.`, nofit ? 'info' : 'ok');
     _btAfterBoardChange();
@@ -3467,7 +3604,7 @@ async function btCardBuild(id, kind) {   // kind: 'mixup' | 'new'
     } finally { _btSetBusy(false); }
     if (changed) _btPushHist(it, snap);
     btRenderCard(it);
-    if (it.word !== oldWord) { btRenderWords(); _btComputeFits(); }
+    if (it.word !== oldWord) { _btUpdateWordRows(); _btComputeFits(); }
     _btAfterBoardChange();
 }
 
@@ -3480,7 +3617,7 @@ function btBack(id) {
     const s = it.hist.pop(), wordChanged = s.word !== it.word;
     Object.assign(it, { word: s.word, rows: s.rows, cols: s.cols, cells: s.cells, state: s.state, ok: s.ok, msg: '', msgErr: false });
     _btEval(it); btRenderCard(it);
-    if (wordChanged) { btRenderWords(); _btComputeFits(); }
+    if (wordChanged) { _btUpdateWordRows(); _btComputeFits(); }
     _btAfterBoardChange();
 }
 function btToggleOk(id, on) {
@@ -3532,12 +3669,23 @@ function btRenderBoards() {
     for (const it of bt.items) if (it.state !== 'none') box.appendChild(_btCardEl(it));
     _btShowBoardSections(); _btOkCount();
 }
+// A changed board keeps its card and buttons; only the tiles are redrawn (so
+// the page doesn't shift and the button you pressed keeps its focus).
 function btRenderCard(it) {
     const old = document.querySelector(`.bt-card[data-id="${it.id}"]`);
     if (it.state === 'none') { old?.remove(); _btShowBoardSections(); return; }
-    const el = _btCardEl(it);
-    if (old) old.replaceWith(el);
-    else {
+    if (old) {
+        const wrap = old.querySelector('.table-wrap');
+        const hadFocus = wrap.contains(document.activeElement);
+        wrap.replaceChildren(_btGridFrame(it));
+        if (hadFocus || document.activeElement === document.body) _btKeepFocus(old);
+        old.querySelector('.bt-num').textContent = _btNum(it);
+        old.querySelector('.bt-back').disabled = !it.hist.length;
+        old.querySelector('.bt-ok input').checked = it.ok;
+        old.classList.toggle('building', it.building);
+        _btUpdateCardInfo(it, old);
+    } else {
+        const el = _btCardEl(it);
         const box = $bt('bt-boards'), idx = bt.items.indexOf(it);
         let before = null;
         for (let j = idx + 1; j < bt.items.length && !before; j++) before = box.querySelector(`.bt-card[data-id="${bt.items[j].id}"]`);
@@ -3545,9 +3693,18 @@ function btRenderCard(it) {
     }
     _btShowBoardSections();
 }
+function _btGridFrame(it) {
+    const frame = document.createElement('div'); frame.className = 'grid-frame';
+    const table = document.createElement('table'); table.className = 'editor-table';
+    const ctrls = document.createElement('div'); ctrls.className = 'grid-ctrls';
+    frame.append(table, ctrls);
+    _btBuildGrid(it, table, ctrls);
+    return frame;
+}
 function _btCardEl(it) {
     const el = document.createElement('div');
     el.className = 'bt-card' + (it.building ? ' building' : ''); el.dataset.id = it.id;
+    el.tabIndex = -1;   // can hold focus while its tiles are redrawn
     const head = document.createElement('div'); head.className = 'bt-card-head';
     const num = document.createElement('span'); num.className = 'bt-num'; num.textContent = _btNum(it);
     const word = document.createElement('span'); word.className = 'bt-word';
@@ -3555,16 +3712,12 @@ function _btCardEl(it) {
     head.append(num, word, cnt);
     const note = document.createElement('div'); note.className = 'bt-card-note';
     const wrap = document.createElement('div'); wrap.className = 'table-wrap';
-    const frame = document.createElement('div'); frame.className = 'grid-frame';
-    const table = document.createElement('table'); table.className = 'editor-table';
-    const ctrls = document.createElement('div'); ctrls.className = 'grid-ctrls';
-    frame.append(table, ctrls); wrap.appendChild(frame);
-    _btBuildGrid(it, table, ctrls);
+    wrap.appendChild(_btGridFrame(it));
     const acts = document.createElement('div'); acts.className = 'bt-card-actions';
     acts.append(
         _btBtn('Mixup', 'btn btn-sec', () => btCardBuild(it.id, 'mixup'), false, 'Same big word, new layout on this grid'),
         _btBtn('New Word', 'btn btn-sec', () => btCardBuild(it.id, 'new'), false, 'A different random big word on this grid'),
-        _btBtn('← Back', 'btn btn-sec', () => btBack(it.id), !it.hist.length, 'Undo the last Mixup, New Word or word change on this board'));
+        _btBtn('← Back', 'btn btn-sec bt-back', () => btBack(it.id), !it.hist.length, 'Undo the last Mixup, New Word or word change on this board'));
     const ok = document.createElement('label'); ok.className = 'bt-ok';
     const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = it.ok;
     cb.onchange = () => btToggleOk(it.id, cb.checked);
@@ -3652,7 +3805,9 @@ function _btUpdateCardInfo(it, el) {
     el = el || document.querySelector(`.bt-card[data-id="${it.id}"]`);
     if (!el) return;
     el.classList.toggle('ok', it.ok);
-    el.querySelector('.bt-word').textContent = it.word;
+    const wEl = el.querySelector('.bt-word'), wLen = document.createElement('span');
+    wLen.className = 'bt-wlen'; wLen.textContent = ` (${it.word.length})`;   // "CAPITALIZATION (14)"
+    wEl.replaceChildren(it.word, wLen);
     const cnt = el.querySelector('.bt-count'), ev = it.ev, cntR = _bbParseRange(bt.range);
     const inRange = ev && cntR && ev.count >= cntR.lo && ev.count <= cntR.hi;
     if (!ev || !ev.hasAny) { cnt.className = 'bt-count none'; cnt.textContent = '— words'; }
@@ -3738,7 +3893,7 @@ function _btReviewRow(word) {
 }
 function _btRescore(word) {
     for (const it of bt.items) if (it.found && it.found.has(word)) { _btScore(it); _btUpdateCardInfo(it); }
-    if (bt.items.some(it => it.word === word)) btRenderWords();   // a ✕'d big word gets a warning
+    if (bt.items.some(it => it.word === word)) _btUpdateWordRows();   // a ✕'d big word gets a warning
     _btReviewSummary(); btRenderPush();
     scheduleWordCount();   // keep the One-board count honest too
 }
@@ -3781,8 +3936,7 @@ function btRenderPush() {
     const okItems = bt.items.filter(it => it.ok);
     const built = bt.items.filter(it => it.state !== 'none').length;
     btn.textContent = okItems.length ? `Push ${okItems.length} OK board${_btS(okItems.length)} to the next available days` : 'Push to the next available days';
-    btn.dataset.off = okItems.length ? '' : '1';
-    btn.disabled = _btBusy || !okItems.length;
+    btn.disabled = !okItems.length;
     list.style.display = 'none';
     if (!okItems.length) { sum.textContent = built ? 'Tick OK on the boards you want to push.' : ''; return; }
     if (db && _btDatesErr) { sum.textContent = "Couldn't read the calendar. Check your connection, then reload the page."; return; }
@@ -3843,7 +3997,7 @@ async function btPush() {
         const clash = okItems.filter(it => usedOn.has(it.word));
         if (clash.length) {
             say(`${clash.map(it => `${_btNum(it)} ${it.word} is already the big word on ${usedOn.get(it.word)}`).join('; ')}. Press ↻ or New Word for ${clash.length > 1 ? 'those' : 'it'} first.`, 'err');
-            btRenderWords(); return;
+            _btUpdateWordRows(); return;
         }
         targets = _btTargets(okItems.length, _btOccupied());
         if (targets.length < okItems.length) { say("Couldn't find enough empty days.", 'err'); return; }
@@ -3867,7 +4021,6 @@ async function btPush() {
 
         const done = new Set(okItems.map(it => it.id));
         bt.items = bt.items.filter(it => !done.has(it.id));
-        bt.count = bt.items.length || bt.count;
         for (const d of targets) _btDateTree.add(d);
         if (_bbTrack() === bt.track && edAvailDates) for (const d of targets) edAvailDates[d] = true;
         if (_btPushed && _btPushed.track === bt.track) for (const d of targets) _btPushed.dates.add(d);
