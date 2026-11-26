@@ -3237,8 +3237,8 @@ function btRenderSetup() {
     $bt('bt-len').value = bt.len;
     $bt('bt-range').value = bt.range;
     $bt('bt-reset-btn').style.display = bt.items.length ? '' : 'none';
-    // Each press picks this many MORE (the list can grow to as many as you like).
-    $bt('bt-pick-btn').textContent = bt.items.length ? `Pick ${bt.count} more` : `Pick ${bt.count} word${_btS(bt.count)}`;
+    // Each press REPLACES the whole list with this many fresh words.
+    $bt('bt-pick-btn').textContent = bt.items.length ? `Pick ${bt.count} new word${_btS(bt.count)}` : `Pick ${bt.count} word${_btS(bt.count)}`;
 }
 function btSetField(name, value) {
     if (!bt) return;
@@ -3269,10 +3269,11 @@ function btStartOver() {
 
 // Big words already used on a saved date of this track.
 function _btUsedWords() { const u = _bbUsed[bt.track]; return new Set(u ? u.map.values() : []); }
-// Unused, not-crossed-out dictionary words in the length range, and not already in this batch.
-function _btPool(lenR) {
+// Unused, not-crossed-out dictionary words in the length range, and (unless
+// allowBatch) not already in this batch.
+function _btPool(lenR, allowBatch = false) {
     const taken = _btUsedWords();
-    for (const it of bt.items) taken.add(it.word);
+    if (!allowBatch) for (const it of bt.items) taken.add(it.word);
     const out = [];
     for (const w of edDict) if (w.length >= lenR.lo && w.length <= lenR.hi && !edWordSelections.has(w) && !taken.has(w)) out.push(w);
     return out;
@@ -3288,16 +3289,21 @@ async function btPickWords() {
     const say = (m, t) => _btStatus('bt-setup-status', m, t);
     if (!edDict) { say('The dictionary is still loading. Try again in a moment.', 'info'); return; }
     const r = _btRanges(); if (r.err) { say(r.err, 'err'); return; }
+    // Pressing again replaces the whole list (and any boards built from it).
     const need = bt.count, have = bt.items.length;
+    const built = bt.items.filter(it => it.state !== 'none').length;
+    if (built && !confirm(`Replace all ${have} word${_btS(have)} with ${need} new one${_btS(need)}? This also clears the ${built} board${_btS(built)} you've built. Nothing on the calendar changes.`)) return;
     _btSetBusy(true);
     try {
         say('Checking which big words are already used…', 'info');
         if (!(await _btEnsureUsed(say))) return;
-        const pool = _bbShuffle(_btPool(r.lenR));
+        // Fresh words, different from the ones being replaced, unless that leaves too few.
+        let pool = _bbShuffle(_btPool(r.lenR));
+        if (pool.length < need) pool = _bbShuffle(_btPool(r.lenR, true));
         if (pool.length < need) { say(`Only ${pool.length} unused ${_bbRangeText(r.lenR)}-letter words are left. Lower "How many puzzles" or change the big word length.`, 'err'); return; }
-        for (let i = 0; i < need; i++) bt.items.push(_btNewItem(pool[i]));
-        const total = bt.items.length;
-        say(have ? `Added ${need} more word${_btS(need)} (${total} in all).` : `Picked ${need} word${_btS(need)}. Swap any you don't like, then press Build.`, 'ok');
+        bt.items = pool.slice(0, need).map(_btNewItem);
+        _btClearStatuses();
+        say(`${have ? 'Replaced with' : 'Picked'} ${need} word${_btS(need)}. Swap any you don't like, then press Build.`, 'ok');
     } finally { _btSetBusy(false); }
     _btSaveNow(); btRenderAll(); _btComputeFits();
 }
