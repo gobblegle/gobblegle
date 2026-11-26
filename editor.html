@@ -327,6 +327,8 @@
         .bt-reroll:hover:not(:disabled) { background: var(--cell-active); border-color: var(--cell-border-active); }
         .bt-reroll:disabled { opacity: 0.4; cursor: default; }
         .bt-reroll.bt-rm { color: var(--text-muted); font-size: 0.9rem; margin-left: 4px; }
+        .bt-reroll.bt-wback { margin-right: 4px; }
+        .bt-reroll.bt-wback.off { opacity: 0.3; cursor: default; background: var(--surface); border-color: var(--border); }
         .bt-reroll.bt-rm:hover { color: var(--error); border-color: var(--error); background: var(--surface); }
 
         .bt-boards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(330px, 100%), 1fr)); gap: 14px; }
@@ -336,9 +338,22 @@
         }
         .bt-card.ok { border-color: #16a34a; }
         .bt-card.building .table-wrap { opacity: 0.5; pointer-events: none; }
-        .bt-card-head { display: flex; align-items: center; gap: 8px; }
+        /* Wraps so a long big word keeps the whole line (the word count drops below it). */
+        .bt-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+        .bt-card-head .bt-count { margin-left: auto; }
         .bt-num { font-size: 0.78rem; color: var(--text-muted); font-weight: 700; }
-        .bt-word { font-weight: 800; letter-spacing: 0.04em; color: var(--primary); flex: 1; overflow-wrap: anywhere; }
+        .bt-word { font-weight: 800; letter-spacing: 0.04em; color: var(--primary); flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; }
+        /* Typeable big word in a board's title: looks like the title, dashed underline says "you can type here". */
+        .bt-word-input {
+            font: inherit; letter-spacing: inherit; color: inherit; text-transform: uppercase;
+            background: transparent; border: 1.5px solid transparent; border-bottom: 1.5px dashed var(--border);
+            border-radius: 5px; padding: 1px 4px; margin-left: -5px; min-width: 3ch; max-width: 100%; outline: none;
+        }
+        .bt-word-input:hover { border-color: var(--border); }
+        .bt-word-input:focus { border: 1.5px solid var(--primary); background: var(--surface); }
+        /* Bright red letters: the typed word isn't in the dictionary. */
+        .bt-words input.field-input.bt-notword, .bt-card .bt-word-input.bt-notword { color: #e60000; }
+        body.dark .bt-words input.field-input.bt-notword, body.dark .bt-card .bt-word-input.bt-notword { color: #ff4d4d; }
         .bt-wlen { font-weight: 700; letter-spacing: 0; color: var(--text-muted); white-space: nowrap; }
         .bt-count { font-weight: 800; font-size: 0.82rem; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
         .bt-count.good { background: #dcfce7; color: #166534; }
@@ -404,7 +419,9 @@
             }
             .bt-words td.bt-fitcell::before { content: attr(data-size); }
             .bt-fit { width: 26px; height: 22px; }
-            .bt-reroll { width: 34px; height: 34px; }
+            .bt-reroll { width: 32px; height: 32px; }
+            .bt-reroll.bt-wback { margin-right: 3px; }
+            .bt-reroll.bt-rm { margin-left: 3px; }
 
             /* Boards: a little more room so a 5-wide grid fits on a 360px phone.
                (Wider grids scroll sideways inside their own card; the page stays put.)
@@ -642,7 +659,7 @@
 
         <div class="card" id="bt-words-card">
             <div class="card-title">2 · Big words</div>
-            <div class="hint">Green means the big word fits on an empty grid that size. <b>↻</b> picks a different word, or type your own.</div>
+            <div class="hint">Green means the big word fits on an empty grid that size. <b>↻</b> picks a different word, <b>←</b> goes back to the one before, or type your own.</div>
             <div class="bt-words-wrap"><table class="bt-words" id="bt-words"></table></div>
             <div class="bt-row">
                 <button class="btn bt-act" id="bt-build-btn" onclick="btBuildAll()">Build boards</button>
@@ -653,7 +670,7 @@
 
         <div class="card" id="bt-boards-card">
             <div class="card-title">3 · Boards <span class="bt-section-note" id="bt-ok-count"></span></div>
-            <div class="hint">Type letters, <b>-</b> to block a tile, or a space to clear one. Use <b>+</b> and <b>×</b> around a grid to add or remove rows and columns. Tick <b>OK</b> on each board you're happy with. Only OK boards get pushed.</div>
+            <div class="hint">Type letters, <b>-</b> to block a tile, or a space to clear one. Use <b>+</b> and <b>×</b> around a grid to add or remove rows and columns. Tap a board's big word to type a different one (<b style="color:#e60000">red</b> = not in the dictionary). Tick <b>OK</b> on each board you're happy with. Only OK boards get pushed.</div>
             <div class="status" id="bt-boards-status"></div>
             <div class="bt-boards" id="bt-boards"></div>
         </div>
@@ -3111,8 +3128,16 @@ function _btFresh(track, count = 10) {
 // state: 'none' (not built yet) | 'built' | 'nofit' (big word didn't fit the start size)
 function _btNewItem(word) {
     return { id: _btNextId++, word, rows: 0, cols: 0, cells: null, state: 'none', ok: false,
-             hist: [], found: null, ev: null, msg: '', msgErr: false, building: false };
+             hist: [], wordHist: [], found: null, ev: null, msg: '', msgErr: false, building: false };
 }
+// Earlier words of one puzzle, for the ← beside it in the table. Each entry also
+// keeps that word's board (if it had one) so going back brings the board back too.
+const BT_WORD_HIST_MAX = 30;
+function _btPushWordHist(it, word, snap) {
+    it.wordHist.push({ word, snap });
+    if (it.wordHist.length > BT_WORD_HIST_MAX) it.wordHist.shift();
+}
+function _btCanWordBack(it) { return it.wordHist.some(e => e.word !== it.word); }
 function _btItem(id) { return bt && bt.items.find(it => it.id === id); }
 function _btNum(it) { return `#${bt.items.indexOf(it) + 1}`; }
 function _btEmptyCells(R, C) { return Array.from({ length: R }, () => new Array(C).fill('')); }
@@ -3212,7 +3237,31 @@ function btRenderAll() {
 function _btSetBusy(on) {
     _btBusy = on;
     $bt('batch-view').classList.toggle('bt-busy', on);
-    document.querySelectorAll('#bt-words input').forEach(i => { i.readOnly = on; });
+    document.querySelectorAll('#bt-words input, .bt-word-input').forEach(i => { i.readOnly = on; });
+}
+// A big word players can score: in the dictionary or ✓-approved. (Until the
+// dictionary has loaded, every word counts as fine.)
+function _btIsWord(w) { return !edDict || edDict.has(w) || edWordApprovals.has(w); }
+function _btCleanWord(v) { return String(v).replace(/[^a-z]/gi, '').toUpperCase(); }
+// Bright red letters while the word in a box isn't in the dictionary.
+function _btMarkWord(inp) {
+    const w = _btCleanWord(inp.value);
+    inp.classList.toggle('bt-notword', !!w && !_btIsWord(w));
+}
+// Put a board's title back to its current word (after a typed word wasn't used).
+function _btResetTitle(it) {
+    const inp = document.querySelector(`.bt-card[data-id="${it.id}"] .bt-word-input`);
+    if (inp) { inp.value = it.word; inp.oninput(); }
+}
+// Board title box hugs its word (measured in its own font).
+function _btFitTitle(inp) {
+    if (!inp.isConnected) { requestAnimationFrame(() => { if (inp.isConnected) _btFitTitle(inp); }); return; }
+    const cs = getComputedStyle(inp);
+    if (!_btMeasureCtx) _btMeasureCtx = document.createElement('canvas').getContext('2d');
+    _btMeasureCtx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const t = (inp.value || ' ').toUpperCase(), ls = parseFloat(cs.letterSpacing) || 0;
+    const extra = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth) + 4;
+    inp.style.width = Math.ceil(_btMeasureCtx.measureText(t).width + ls * t.length + extra) + 'px';
 }
 function _btBtn(text, cls, onclick, off, title) {
     const b = document.createElement('button');
@@ -3326,7 +3375,8 @@ function _btRenumber() {
         if (tr) {
             tr.querySelector('.bt-n').textContent = i + 1;
             tr.querySelector('input').setAttribute('aria-label', `Big word for puzzle ${i + 1}`);
-            const [rb, xb] = tr.querySelectorAll('.bt-reroll');
+            const [bb, rb, xb] = tr.querySelectorAll('.bt-reroll');
+            bb?.setAttribute('aria-label', `Go back to the previous word for puzzle ${i + 1}`);
             rb?.setAttribute('aria-label', `Pick a different word for puzzle ${i + 1}`);
             xb?.setAttribute('aria-label', `Remove puzzle ${i + 1}`);
         }
@@ -3403,7 +3453,7 @@ function btRenderWords() {
         inp.setAttribute('aria-label', `Big word for puzzle ${i + 1}`);
         inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } };
         const len = document.createElement('td'); len.className = 'bt-len';
-        inp.oninput = () => { len.textContent = inp.value.replace(/[^a-z]/gi, '').length; _btSizeWordInputs(); };
+        inp.oninput = () => { len.textContent = _btCleanWord(inp.value).length; _btMarkWord(inp); _btSizeWordInputs(); };
         inp.onchange = () => btTypeWord(it.id, inp.value);
         wtd.appendChild(inp);
         tr.append(n, wtd, len);
@@ -3413,11 +3463,14 @@ function btRenderWords() {
             s.className = 'bt-fit'; td.appendChild(s); tr.appendChild(td);
         });
         const rtd = document.createElement('td'); rtd.className = 'bt-btns';
+        // Dimmed (not disabled) when there's nothing to go back to, so it never drops focus.
+        const bb = _btBtn('←', 'bt-reroll bt-wback', () => btWordBack(it.id), false, 'Go back to the previous word');
+        bb.setAttribute('aria-label', `Go back to the previous word for puzzle ${i + 1}`);
         const rb = _btBtn('↻', 'bt-reroll', () => btReroll(it.id), false, 'Pick a different word');
         rb.setAttribute('aria-label', `Pick a different word for puzzle ${i + 1}`);
         const xb = _btBtn('×', 'bt-reroll bt-rm', () => btRemoveItem(it.id), false, 'Remove this puzzle from the batch');
         xb.setAttribute('aria-label', `Remove puzzle ${i + 1}`);
-        rtd.append(rb, xb); tr.appendChild(rtd);
+        rtd.append(bb, rb, xb); tr.appendChild(rtd);
         body.appendChild(tr);
     });
     tb.append(thead, body);
@@ -3431,7 +3484,9 @@ function _btUpdateWordRows() {
         if (!tr) continue;
         const inp = tr.querySelector('input');
         if (inp.value.toUpperCase() !== it.word && document.activeElement !== inp) inp.value = it.word;
+        _btMarkWord(inp);
         tr.querySelector('.bt-len').textContent = it.word.length;
+        tr.querySelector('.bt-wback')?.classList.toggle('off', !_btCanWordBack(it));
         const warn = _btWordWarnings(it);
         let note = tr.querySelector('.bt-wnote');
         if (warn.length) {
@@ -3443,12 +3498,14 @@ function _btUpdateWordRows() {
     }
     _btSizeWordInputs();
 }
+// The button never hides: once every board is built it becomes "Rebuild all",
+// so you can change the word count and press it again.
 function _btUpdateBuildBtn() {
-    const todo = bt.items.filter(it => it.state === 'none').length;
+    const n = bt.items.length, todo = bt.items.filter(it => it.state === 'none').length;
     const bb = $bt('bt-build-btn');
-    bb.style.display = todo ? '' : 'none';
-    bb.textContent = todo === bt.items.length ? `Build ${todo} board${_btS(todo)}` : `Build ${todo} new board${_btS(todo)}`;
-    $bt('bt-build-note').textContent = todo ? '' : "All boards are built. They're below.";
+    bb.style.display = n ? '' : 'none';
+    bb.textContent = !todo ? `Rebuild all ${n} board${_btS(n)}` : todo === n ? `Build ${n} board${_btS(n)}` : `Build ${todo} new board${_btS(todo)}`;
+    $bt('bt-build-note').textContent = todo ? '' : 'All built (below). Rebuild gives every board a new layout using the Word count above.';
 }
 // Every big word box gets the width of the longest word, measured in the box's
 // own font, so no word is ever cut off. (On a phone each row splits into two
@@ -3472,11 +3529,11 @@ function _btSizeWordInputs() {
 }
 async function btTypeWord(id, value) {
     const it = _btItem(id); if (!it) return;
-    const w = String(value).replace(/[^a-z]/gi, '').toUpperCase();
+    const w = _btCleanWord(value);
     if (!w || w === it.word || _btBusy) {
         const inp = document.querySelector(`#bt-words tr[data-id="${id}"] input`);
         if (inp) inp.value = it.word;
-        _btUpdateWordRows(); return;
+        _btUpdateWordRows(); _btResetTitle(it); return;
     }
     await _btChangeWord(it, w);
 }
@@ -3492,19 +3549,44 @@ async function btReroll(id) {
 }
 // A new word from the table (typed or ↻) changes it everywhere; a built board
 // is rebuilt fresh at the start size (← Back on the board undoes it).
-async function _btChangeWord(it, w) {
+// back = the word-history entry when the table's ← is going back to it.
+async function _btChangeWord(it, w, back = null) {
     if (_btBusy) return;
-    const snap = it.state !== 'none' ? _btSnap(it) : null;
-    it.word = w;
-    if (snap) {
-        const r = _btRanges();
-        if (r.err) { _btStatus('bt-words-status', r.err, 'err'); it.word = snap.word; _btUpdateWordRows(); return; }
-        _btSetBusy(true);
-        try { if (await _btBuildOne(it, 'fresh', r.cntR)) _btPushHist(it, snap); }
-        finally { _btSetBusy(false); }
-        btRenderCard(it);
+    const prev = it.word, snap = it.state !== 'none' ? _btSnap(it) : null;
+    if (snap && back && back.snap) {
+        // That word's board was remembered: bring it back exactly as it was
+        // (the board's own ← Back can still return to the one you just left).
+        _btPushHist(it, snap);
+        const s = back.snap;
+        Object.assign(it, { word: s.word, rows: s.rows, cols: s.cols, cells: s.cells ? s.cells.map(r => r.slice()) : null,
+                            state: s.state, ok: s.ok, msg: '', msgErr: false });
+        _btEval(it); btRenderCard(it);
+    } else {
+        it.word = w;
+        if (snap) {
+            const r = _btRanges();
+            if (r.err) {
+                _btStatus('bt-words-status', r.err, 'err'); it.word = prev;
+                if (back) it.wordHist.push(back);
+                _btUpdateWordRows(); _btResetTitle(it); return;
+            }
+            _btSetBusy(true);
+            try { if (await _btBuildOne(it, 'fresh', r.cntR)) _btPushHist(it, snap); }
+            finally { _btSetBusy(false); }
+            btRenderCard(it);
+        }
     }
+    if (!back) _btPushWordHist(it, prev, snap);
     _btSaveNow(); _btUpdateWordRows(); _btUpdateBuildBtn(); _btComputeFits(); _btAfterBoardChange();
+}
+// ← beside a word in the table: back to the word it had before (and its board).
+async function btWordBack(id) {
+    const it = _btItem(id); if (!it || _btBusy) return;
+    let e;
+    while ((e = it.wordHist.pop()) && e.word === it.word) { /* skip: already showing that word */ }
+    if (!e) { _btUpdateWordRows(); return; }
+    _btStatus('bt-words-status', '');
+    await _btChangeWord(it, e.word, e);
 }
 
 // ── 3 · Boards ──────────────────────────────────────────────────────────────
@@ -3578,23 +3660,38 @@ async function btBuildAll() {
     const say = (m, t) => _btStatus('bt-words-status', m, t);
     if (!edDict) { say('The dictionary is still loading. Try again in a moment.', 'info'); return; }
     const r = _btRanges(); if (r.err) { say(r.err, 'err'); return; }
-    const todo = bt.items.filter(it => it.state === 'none');
-    if (!todo.length) return;
+    // Unbuilt boards first. Once all are built, pressing again rebuilds every
+    // board (Mixup on its current size and blanks, so resized boards stay that size).
+    let todo = bt.items.filter(it => it.state === 'none');
+    const rebuild = !todo.length;
+    if (rebuild) {
+        todo = bt.items.slice();
+        if (!todo.length) return;
+        const oks = todo.filter(it => it.ok).length;
+        if (oks && !confirm(`Rebuild all ${todo.length} board${_btS(todo.length)}? ${oks} ticked OK will be rebuilt too and need ticking again. Each board's ← Back brings its old one back.`)) return;
+    }
     _btSetBusy(true);
-    let nofit = 0;
+    let nofit = 0, missed = 0;
     try {
         for (let i = 0; i < todo.length; i++) {
             const it = todo[i];
-            const head = `Building board ${i + 1} of ${todo.length} (${it.word})`;
+            const head = `${rebuild ? 'Rebuilding' : 'Building'} board ${i + 1} of ${todo.length} (${it.word})`;
             say(`${head}…`, 'info');
-            await _btBuildOne(it, 'fresh', r.cntR, m => say(`${head}: ${m}`, 'info'));
+            const snap = rebuild ? _btSnap(it) : null;
+            const changed = await _btBuildOne(it, rebuild ? 'mixup' : 'fresh', r.cntR, m => say(`${head}: ${m}`, 'info'));
+            if (rebuild) { if (changed) _btPushHist(it, snap); else missed++; }
             if (it.state === 'nofit') nofit++;
             btRenderCard(it); _btOkCount(); _btSave();
         }
     } finally { _btSetBusy(false); }
     _btUpdateBuildBtn();
-    const size = BT_START[bt.track].join('×');
-    say(`Built ${todo.length} board${_btS(todo.length)}.${nofit ? ` ${nofit} big word${_btS(nofit)} didn't fit ${size}; ${nofit > 1 ? 'those boards say' : 'that board says'} so below.` : ''} Scroll down to check them.`, nofit ? 'info' : 'ok');
+    const size = BT_START[bt.track].join('×'), n = todo.length;
+    if (rebuild) {
+        const done = n - missed;
+        say(`Rebuilt ${done} board${_btS(done)} for ${_bbRangeText(r.cntR)} words.${missed ? ` ${missed} couldn't be; ${missed > 1 ? 'those boards say' : 'that board says'} why below.` : ''} Scroll down to check them.`, missed ? 'info' : 'ok');
+    } else {
+        say(`Built ${n} board${_btS(n)}.${nofit ? ` ${nofit} big word${_btS(nofit)} didn't fit ${size}; ${nofit > 1 ? 'those boards say' : 'that board says'} so below.` : ''} Scroll down to check them.`, nofit ? 'info' : 'ok');
+    }
     _btAfterBoardChange();
 }
 
@@ -3610,7 +3707,7 @@ async function btCardBuild(id, kind) {   // kind: 'mixup' | 'new'
     } finally { _btSetBusy(false); }
     if (changed) _btPushHist(it, snap);
     btRenderCard(it);
-    if (it.word !== oldWord) { _btUpdateWordRows(); _btComputeFits(); }
+    if (it.word !== oldWord) { _btPushWordHist(it, oldWord, snap); _btUpdateWordRows(); _btComputeFits(); }
     _btAfterBoardChange();
 }
 
@@ -3620,10 +3717,11 @@ function _btSnap(it) {
 function _btPushHist(it, snap) { it.hist.push(snap); if (it.hist.length > BT_HIST_MAX) it.hist.shift(); }
 function btBack(id) {
     const it = _btItem(id); if (!it || _btBusy || !it.hist.length) return;
-    const s = it.hist.pop(), wordChanged = s.word !== it.word;
+    const s = it.hist.pop(), wordChanged = s.word !== it.word, cur = _btSnap(it);
     Object.assign(it, { word: s.word, rows: s.rows, cols: s.cols, cells: s.cells, state: s.state, ok: s.ok, msg: '', msgErr: false });
     _btEval(it); btRenderCard(it);
-    if (wordChanged) { _btUpdateWordRows(); _btComputeFits(); }
+    // The table's ← always means "the word I had just before this one".
+    if (wordChanged) { _btPushWordHist(it, cur.word, cur); _btUpdateWordRows(); _btComputeFits(); }
     _btAfterBoardChange();
 }
 function btToggleOk(id, on) {
@@ -3713,7 +3811,22 @@ function _btCardEl(it) {
     el.tabIndex = -1;   // can hold focus while its tiles are redrawn
     const head = document.createElement('div'); head.className = 'bt-card-head';
     const num = document.createElement('span'); num.className = 'bt-num'; num.textContent = _btNum(it);
+    // The big word in the title is typeable: Enter (or tapping away) uses it,
+    // exactly like typing it in the table. Esc puts the old word back.
     const word = document.createElement('span'); word.className = 'bt-word';
+    const winp = document.createElement('input');
+    winp.type = 'text'; winp.className = 'bt-word-input bt-act'; winp.value = it.word;
+    winp.spellcheck = false; winp.autocomplete = 'off'; winp.readOnly = _btBusy;
+    winp.setAttribute('aria-label', 'Big word for this board (type a different one to change it)');
+    winp.title = 'Type a different big word, then press Enter';
+    const wlen = document.createElement('span'); wlen.className = 'bt-wlen';
+    winp.oninput = () => { wlen.textContent = ` (${_btCleanWord(winp.value).length})`; _btMarkWord(winp); _btFitTitle(winp); };
+    winp.onkeydown = e => {
+        if (e.key === 'Enter') { e.preventDefault(); winp.blur(); }
+        else if (e.key === 'Escape') { winp.value = it.word; winp.oninput(); winp.blur(); }
+    };
+    winp.onchange = () => btTypeWord(it.id, winp.value);
+    word.append(winp, wlen);
     const cnt = document.createElement('span'); cnt.className = 'bt-count';
     head.append(num, word, cnt);
     const note = document.createElement('div'); note.className = 'bt-card-note';
@@ -3811,14 +3924,19 @@ function _btUpdateCardInfo(it, el) {
     el = el || document.querySelector(`.bt-card[data-id="${it.id}"]`);
     if (!el) return;
     el.classList.toggle('ok', it.ok);
-    const wEl = el.querySelector('.bt-word'), wLen = document.createElement('span');
-    wLen.className = 'bt-wlen'; wLen.textContent = ` (${it.word.length})`;   // "CAPITALIZATION (14)"
-    wEl.replaceChildren(it.word, wLen);
+    // Title: "CAPITALIZATION (14)". Left alone while you're typing in it.
+    const winp = el.querySelector('.bt-word-input');
+    if (document.activeElement !== winp) {
+        if (winp.value !== it.word) winp.value = it.word;
+        el.querySelector('.bt-wlen').textContent = ` (${it.word.length})`;
+        _btMarkWord(winp); _btFitTitle(winp);
+    }
     const cnt = el.querySelector('.bt-count'), ev = it.ev, cntR = _bbParseRange(bt.range);
     const inRange = ev && cntR && ev.count >= cntR.lo && ev.count <= cntR.hi;
     if (!ev || !ev.hasAny) { cnt.className = 'bt-count none'; cnt.textContent = '— words'; }
     else { cnt.className = 'bt-count ' + (inRange ? 'good' : 'bad'); cnt.textContent = `${ev.count} word${_btS(ev.count)}`; }
     const parts = [];   // [text, isError]
+    if (!_btIsWord(it.word)) parts.push([`${it.word} isn't in the dictionary, so players can't score it.`, true]);
     if (it.state === 'nofit') parts.push([`${it.word} doesn't fit yet. Add a row or column with the + buttons, then press Mixup. Or press New Word.`, true]);
     else if (ev && ev.hasAny) {
         if (!ev.connected) parts.push(["Letters aren't all connected.", true]);
