@@ -224,6 +224,37 @@
         .ws-btn-blue { border-color: #bfdbfe; color: #bfdbfe; }
         .ws-btn-blue.active { border-color: #2563eb; background: #2563eb; color: #fff; }
 
+        /* Sort toggle above the word lists (A–Z / Unchecked first) */
+        .ws-sortbar {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px;
+            padding: 8px 18px; border-bottom: 1px solid var(--border);
+            font-size: 0.75rem; color: var(--text-muted);
+        }
+        .ws-sort { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+        .ws-sort button {
+            border: 0; background: transparent; color: var(--text-muted); cursor: pointer;
+            font: inherit; font-weight: 700; padding: 5px 10px;
+        }
+        .ws-sort button + button { border-left: 1px solid var(--border); }
+        .ws-sort button.on { background: var(--primary); color: #fff; }
+        .ws-sort-hint { flex: 1; text-align: right; min-width: 0; }
+
+        /* Click a word → its other forms */
+        .ws-word.ws-link { cursor: pointer; }
+        .ws-word.ws-link:hover, .ws-word.ws-link:focus-visible {
+            text-decoration: underline dotted; text-underline-offset: 3px; outline: none;
+        }
+        #word-forms-modal { z-index: 1100; }
+        .wf-group-head {
+            padding: 8px 18px 4px; border-bottom: 1px solid var(--border); background: var(--bg);
+            font-size: 0.72rem; font-weight: 700; color: var(--text-muted);
+            text-transform: uppercase; letter-spacing: 0.06em;
+        }
+        .ws-row.wf-clicked { background: var(--bg); }
+        .ws-row.wf-clicked .ws-word { color: var(--primary); }
+        .wf-empty { padding: 16px 18px; font-size: 0.85rem; color: var(--text-muted); }
+        .ws-footer-note a { color: inherit; }
+
         /* ── Sign-in gate ──
            The editor stays hidden until an approved account signs in. The real
            lock is the database rules (database.rules.json); this just keeps
@@ -680,6 +711,14 @@
             <div class="hint">Every word on every board above, in one list. Works just like Select Words in This Puzzle: <b style="color:#16a34a">✓</b> approved, <b style="color:#dc2626">✕</b> excluded from the valid list. Board word counts update as you go.</div>
             <div class="bt-section-note" id="bt-review-summary"></div>
             <div class="bt-review">
+                <div class="ws-sortbar">
+                    Sort
+                    <span class="ws-sort">
+                        <button type="button" data-sort="az" onclick="wsSetSort('az')">A–Z</button>
+                        <button type="button" data-sort="open" onclick="wsSetSort('open')">Unchecked first</button>
+                    </span>
+                    <span class="ws-sort-hint">Click a word to see its other forms</span>
+                </div>
                 <div class="ws-col-labels">
                     <span>Word</span>
                     <span style="width:28px;text-align:center;color:#16a34a">✓</span>
@@ -716,6 +755,14 @@
             <span>Select Words in This Puzzle</span>
             <button class="btn btn-sec" style="padding:4px 10px;font-size:0.82rem" onclick="closeWordSelect()">✕</button>
         </div>
+        <div class="ws-sortbar">
+            Sort
+            <span class="ws-sort">
+                <button type="button" data-sort="az" onclick="wsSetSort('az')">A–Z</button>
+                <button type="button" data-sort="open" onclick="wsSetSort('open')">Unchecked first</button>
+            </span>
+            <span class="ws-sort-hint">Click a word to see its other forms</span>
+        </div>
         <div class="ws-col-labels">
             <span>Word</span>
             <span style="width:28px;text-align:center;color:#16a34a">✓</span>
@@ -726,6 +773,26 @@
             <span class="ws-footer-note">✓ approved &nbsp;·&nbsp; ✕ excluded from valid list</span>
             <button class="btn btn-sec" onclick="closeWordSelect()">Cancel</button>
             <button class="btn" onclick="applyWordSelections()">Set</button>
+        </div>
+    </div>
+</div>
+
+<!-- Word-forms popup: click a word in either word list to see its other forms -->
+<div id="word-forms-modal" class="ws-modal-shell" onclick="if (event.target === this) closeWordForms()">
+    <div class="ws-panel">
+        <div class="ws-header">
+            <span id="wf-title">Other forms</span>
+            <button class="btn btn-sec" style="padding:4px 10px;font-size:0.82rem" onclick="closeWordForms()">✕</button>
+        </div>
+        <div class="ws-col-labels">
+            <span>Word</span>
+            <span style="width:28px;text-align:center;color:#16a34a">✓</span>
+            <span style="width:28px;text-align:center;color:#dc2626">✕</span>
+        </div>
+        <div class="ws-body" id="wf-body"></div>
+        <div class="ws-footer">
+            <span class="ws-footer-note">Only words in your dictionary are shown. Word forms from the English Speller Database © Kevin Atkinson · <a href="esdb/Copyright.txt" target="_blank" rel="noopener">copyright</a></span>
+            <button class="btn" onclick="closeWordForms()">Done</button>
         </div>
     </div>
 </div>
@@ -1709,6 +1776,185 @@ async function _toggleWordAppr(word) {
     return !approved;
 }
 
+// ── Shared word rows (One-board Select Words + Batch Word review + popup) ───
+// Sort: 'az' = A–Z, 'open' = words with no ✓/✕ first, then the rest, each A–Z.
+// The order is worked out when a list is drawn and stays put while you click
+// ✓/✕; flip the toggle (or reopen the list) to re-sort.
+const WS_SORT_LS_KEY = 'G2_ws_sort';
+let wsSort = 'az';
+try { if (localStorage.getItem(WS_SORT_LS_KEY) === 'open') wsSort = 'open'; } catch {}
+
+function wsSortWords(words) {
+    const az = (a, b) => a.localeCompare(b);
+    if (wsSort !== 'open') return words.slice().sort(az);
+    const marked = w => (edWordApprovals.has(w) || edWordSelections.has(w)) ? 1 : 0;
+    return words.slice().sort((a, b) => marked(a) - marked(b) || az(a, b));
+}
+function _wsPaintSortButtons() {
+    document.querySelectorAll('.ws-sort button').forEach(b => b.classList.toggle('on', b.dataset.sort === wsSort));
+}
+function wsSetSort(mode) {
+    wsSort = mode === 'open' ? 'open' : 'az';
+    try { localStorage.setItem(WS_SORT_LS_KEY, wsSort); } catch {}
+    _wsPaintSortButtons();
+    if (document.getElementById('word-select-modal').classList.contains('open')) renderWordSelectList();
+    if (bt) btRenderReview();
+}
+
+// ✓ and ✕ are exclusive. The sets flip right away (Firebase saves follow), so
+// every row showing this word, in any list, is repainted at once.
+function wsToggle(word, kind) {
+    const appr = kind === 'appr';
+    const other = appr ? edWordSelections : edWordApprovals;
+    const turningOn = !(appr ? edWordApprovals : edWordSelections).has(word);
+    const p1 = appr ? _toggleWordAppr(word) : _toggleWordSel(word);
+    const p2 = turningOn && other.has(word) ? (appr ? _toggleWordSel(word) : _toggleWordAppr(word)) : null;
+    wsPaintWord(word);
+    return Promise.all([p1, p2]);
+}
+function _wsPaintRow(row) {
+    const w = row.dataset.word;
+    row.querySelector('.ws-btn-green').classList.toggle('active', edWordApprovals.has(w));
+    row.querySelector('.ws-btn-red').classList.toggle('active', edWordSelections.has(w));
+}
+function wsPaintWord(word) {
+    document.querySelectorAll(`.ws-row[data-word="${CSS.escape(word)}"]`).forEach(_wsPaintRow);
+}
+// One word row: the word (click → its other forms), ✓ and ✕.
+// onChange(word) runs after each toggle (Batch uses it to recount boards).
+function wsMakeRow(word, { custom = false, onChange = null, link = true, clicked = false } = {}) {
+    const row = document.createElement('div');
+    row.className = 'ws-row' + (clicked ? ' wf-clicked' : '');
+    row.dataset.word = word;
+    const wspan = document.createElement('span');
+    wspan.className = 'ws-word' + (custom ? ' is-custom' : '') + (link ? ' ws-link' : '');
+    wspan.textContent = word;
+    if (custom) {
+        const badge = document.createElement('span');
+        badge.className = 'ws-custom-badge'; badge.textContent = 'custom';
+        wspan.appendChild(badge);
+    }
+    if (link) {
+        wspan.tabIndex = 0; wspan.setAttribute('role', 'button');
+        wspan.title = `See the other forms of ${word}`;
+        wspan.onclick = () => openWordForms(word, onChange);
+        wspan.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openWordForms(word, onChange); } };
+    }
+    const gbtn = document.createElement('button'), rbtn = document.createElement('button');
+    gbtn.className = 'ws-btn ws-btn-green'; rbtn.className = 'ws-btn ws-btn-red';
+    gbtn.textContent = '✓'; rbtn.textContent = '✕';
+    gbtn.setAttribute('aria-label', `Approve ${word}`); rbtn.setAttribute('aria-label', `Exclude ${word}`);
+    gbtn.onclick = () => { const p = wsToggle(word, 'appr'); if (onChange) onChange(word); return p; };
+    rbtn.onclick = () => { const p = wsToggle(word, 'sel'); if (onChange) onChange(word); return p; };
+    row.append(wspan, gbtn, rbtn);
+    _wsPaintRow(row);
+    return row;
+}
+
+// ── Word-forms popup ────────────────────────────────────────────────────────
+// esdb/scowl-pre.txt is the whole English Speller Database (Kevin Atkinson;
+// notice in esdb/Copyright.txt), unchanged. The first click on a word reads it
+// once and keeps, for each base word, the forms that are in the game
+// dictionary (all parts of speech merged: FIND noun + verb = FIND FINDS FOUND
+// FINDING). A word can be in several families (FOUND is in FIND's and in its
+// own); the popup shows all of them.
+//
+// File layout: groups of lines split by blank lines, each line
+//   SIZES/SOURCES ': ' [VARIANT ': '] LEMMA [' <'POS'>'] [' {'NOTE'}'] [' ('USAGE')'] [': ' FORMS]
+// where LEMMA "-" repeats the group's word and FORMS look like
+// "pandas, panda's" or "(cacti | ~: cactus | ~: cactuses)".
+const _WF_VARIANT = String.raw`(?:\+|[ABZCD_][.=?v~V@x-]?(?: [ABZCD_][.=?v~V@x-]?)*(?: \{\d+\})?)`;
+const _WF_LINE = new RegExp(String.raw`^(?:${_WF_VARIANT}: )?(.+?)(?: <[^>]*>)?(?: \{[^}]*\})?(?: \([^)|]*\))?(?:: (.*))?$`);
+let _wfIndex = null, _wfLoading = null, _wfWord = null, _wfOnChange = null;
+
+function _wfParse(text, dict) {
+    const bare = s => s.trim().replace(/^[-@!]+/, '').replace(/[*\-@~!†]+$/, '');
+    const fams = new Map();   // base word → Set of dictionary words
+    for (const block of text.split(/\r?\n[ \t]*\r?\n/)) {
+        let base = null;
+        for (let line of block.split(/\r?\n/)) {
+            const hash = line.indexOf(' #'); if (hash >= 0) line = line.slice(0, hash);
+            line = line.trim();
+            if (!line || line[0] === '#') continue;
+            const i = line.indexOf(': ');
+            const m = (i < 0 ? '' : line.slice(i + 2)).match(_WF_LINE);   // drop the sizes/sources part
+            if (!m) continue;
+            const lemma = m[1].trim() === '-' ? null : bare(m[1]);
+            if (base === null) { if (!lemma) continue; base = lemma; }
+            const words = lemma ? [lemma] : [];
+            if (m[2]) for (const part of m[2].split(/[,|()]/)) {
+                const k = part.lastIndexOf(': ');
+                words.push(k >= 0 ? part.slice(k + 2) : part);
+            }
+            for (const w0 of words) {
+                const w = bare(w0);
+                if (!/^[a-z]+$/.test(w)) continue;       // capitals = names; spaces, ' and . aren't game words
+                const W = w.toUpperCase();
+                if (!dict.has(W)) continue;              // only words in the game dictionary
+                let f = fams.get(base); if (!f) fams.set(base, f = new Set());
+                f.add(W);
+            }
+        }
+    }
+    const idx = new Map();    // word → its families (each: base word first if it's a game word, then A–Z)
+    for (const [base, set] of fams) {
+        if (set.size < 2) continue;
+        const B = base.toUpperCase();
+        const fam = [...set].sort((a, b) => a === B ? -1 : b === B ? 1 : a.localeCompare(b));
+        fam.base = set.has(B) ? B : null;   // null: base isn't a game word (RUN for RUNNING, RUNS)
+        for (const w of fam) { let a = idx.get(w); if (!a) idx.set(w, a = []); a.push(fam); }
+    }
+    return idx;
+}
+function _wfLoad() {
+    if (_wfIndex) return Promise.resolve(_wfIndex);
+    if (!_wfLoading) _wfLoading = fetch('./esdb/scowl-pre.txt')
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(text => (_wfIndex = _wfParse(text, edDict)))
+        .catch(e => { _wfLoading = null; throw e; });
+    return _wfLoading;
+}
+async function openWordForms(word, onChange) {
+    _wfWord = word; _wfOnChange = onChange || null;
+    const modal = document.getElementById('word-forms-modal'), body = document.getElementById('wf-body');
+    document.getElementById('wf-title').textContent = `Forms of ${word}`;
+    modal.classList.add('open');
+    if (!edDict) { body.innerHTML = '<div class="wf-empty">The dictionary is still loading. Try again in a moment.</div>'; return; }
+    body.innerHTML = `<div class="wf-empty">${_wfIndex ? 'Loading…' : 'Reading the word forms list (the first time takes a few seconds)…'}</div>`;
+    let idx;
+    try { idx = await _wfLoad(); }
+    catch { if (_wfWord === word) body.innerHTML = '<div class="wf-empty">Couldn\'t load the word forms list. Check your connection, then try again.</div>'; return; }
+    if (_wfWord !== word || !modal.classList.contains('open')) return;   // closed, or another word clicked
+    // Never show a word that isn't in the dictionary this editor is using.
+    const inDict = w => !edDict || edDict.has(w);
+    const groups = (idx.get(word) || []).map(f => Object.assign(f.filter(inDict), { base: f.base })).filter(f => f.length > 1);
+    body.innerHTML = '';
+    if (!groups.length) {
+        const note = document.createElement('div'); note.className = 'wf-empty';
+        note.textContent = `${word} has no other forms in your dictionary.`;
+        body.append(note, wsMakeRow(word, { onChange: _wfOnChange, link: false, clicked: true }));
+        return;
+    }
+    const frag = document.createDocumentFragment();
+    for (const [n, fam] of groups.entries()) {
+        if (groups.length > 1) {
+            const head = document.createElement('div'); head.className = 'wf-group-head';
+            head.textContent = fam.base ? `${fam.base} family` : `Family ${n + 1}`;
+            frag.appendChild(head);
+        }
+        for (const w of fam) frag.appendChild(wsMakeRow(w, { onChange: _wfOnChange, link: false, clicked: w === word }));
+    }
+    body.appendChild(frag);
+    body.scrollTop = 0;
+}
+function closeWordForms() {
+    _wfWord = null;
+    document.getElementById('word-forms-modal').classList.remove('open');
+}
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.getElementById('word-forms-modal').classList.contains('open')) closeWordForms();
+});
+
 function openWordSelect() {
     if (!_edCurrentWords.length) { showStatus('No words yet — wait for word count to finish.', 'info'); return; }
     renderWordSelectList();
@@ -1723,52 +1969,15 @@ function applyWordSelections() {
 
 function renderWordSelectList() {
     const body = document.getElementById('ws-body');
-    const computed = _edCurrentWords.filter(w => !_edAddedWords.includes(w))
-        .sort((a, b) => a.length - b.length || a.localeCompare(b));
+    const computed = wsSortWords(_edCurrentWords.filter(w => !_edAddedWords.includes(w)));
     // Manually-added words stay at the bottom in the order they were added.
     const ordered = [...computed, ..._edAddedWords];
+    _wsPaintSortButtons();
     body.innerHTML = '';
-    for (const word of ordered) {
-        const row = document.createElement('div');
-        row.className = 'ws-row';
-
-        const wspan = document.createElement('span');
-        wspan.className = 'ws-word' + (_isCustomWord(word) ? ' is-custom' : '');
-        wspan.textContent = word;
-        if (_isCustomWord(word)) {
-            const badge = document.createElement('span');
-            badge.className = 'ws-custom-badge'; badge.textContent = 'custom';
-            wspan.appendChild(badge);
-        }
-
-        const gbtn = document.createElement('button');
-        gbtn.className = 'ws-btn ws-btn-green' + (edWordApprovals.has(word) ? ' active' : '');
-        gbtn.innerHTML = '✓';
-
-        const rbtn = document.createElement('button');
-        rbtn.className = 'ws-btn ws-btn-red' + (edWordSelections.has(word) ? ' active' : '');
-        rbtn.innerHTML = '✕';
-
-        gbtn.onclick = async () => {
-            const nowApproved = await _toggleWordAppr(word);
-            gbtn.className = 'ws-btn ws-btn-green' + (nowApproved ? ' active' : '');
-            if (nowApproved && edWordSelections.has(word)) {
-                await _toggleWordSel(word); // unselect red
-                rbtn.className = 'ws-btn ws-btn-red';
-            }
-        };
-        rbtn.onclick = async () => {
-            const nowExcluded = await _toggleWordSel(word);
-            rbtn.className = 'ws-btn ws-btn-red' + (nowExcluded ? ' active' : '');
-            if (nowExcluded && edWordApprovals.has(word)) {
-                await _toggleWordAppr(word); // unselect green
-                gbtn.className = 'ws-btn ws-btn-green';
-            }
-        };
-
-        row.appendChild(wspan); row.appendChild(gbtn); row.appendChild(rbtn);
-        body.appendChild(row);
-    }
+    const frag = document.createDocumentFragment();
+    for (const word of ordered) frag.appendChild(wsMakeRow(word, { custom: _isCustomWord(word) }));
+    body.appendChild(frag);
+    body.scrollTop = 0;
 }
 
 // ── Add/Remove Words — general DICTIONARY editing ───────────────────────────
@@ -3968,12 +4177,13 @@ function btRenderReview() {
     const body = $bt('bt-review-body');
     const all = new Set(); let boards = 0;
     for (const it of bt.items) if (it.found && it.found.size) { boards++; for (const w of it.found) all.add(w); }
-    _btReviewWords = [...all].sort((a, b) => a.length - b.length || a.localeCompare(b));
+    _btReviewWords = wsSortWords([...all]);
     _btReviewBoards = boards;
+    _wsPaintSortButtons();
     const top = body.scrollTop;
     body.innerHTML = '';
     const frag = document.createDocumentFragment();
-    for (const w of _btReviewWords) frag.appendChild(_btReviewRow(w));
+    for (const w of _btReviewWords) frag.appendChild(wsMakeRow(w, { onChange: _btRescore }));
     body.appendChild(frag);
     body.scrollTop = top;
     _btReviewSummary();
@@ -3985,36 +4195,7 @@ function _btReviewSummary() {
     $bt('bt-review-summary').textContent =
         `${words.length.toLocaleString()} words across ${_btReviewBoards} board${_btS(_btReviewBoards)} · ${ok} ✓ · ${x} ✕ · ${words.length - ok - x} not marked`;
 }
-function _btReviewRow(word) {
-    const row = document.createElement('div'); row.className = 'ws-row';
-    const wspan = document.createElement('span'); wspan.className = 'ws-word'; wspan.textContent = word;
-    const gbtn = document.createElement('button'), rbtn = document.createElement('button');
-    gbtn.textContent = '✓'; rbtn.textContent = '✕';
-    gbtn.setAttribute('aria-label', `Approve ${word}`); rbtn.setAttribute('aria-label', `Exclude ${word}`);
-    const paint = () => {
-        gbtn.className = 'ws-btn ws-btn-green' + (edWordApprovals.has(word) ? ' active' : '');
-        rbtn.className = 'ws-btn ws-btn-red' + (edWordSelections.has(word) ? ' active' : '');
-    };
-    paint();
-    // The toggles flip the shared sets right away (Firebase saves follow), so
-    // paint and recount immediately. ✓ and ✕ are exclusive, like the dialog.
-    gbtn.onclick = async () => {
-        const turningOn = !edWordApprovals.has(word);
-        const p1 = _toggleWordAppr(word);
-        const p2 = turningOn && edWordSelections.has(word) ? _toggleWordSel(word) : null;
-        paint(); _btRescore(word);
-        await p1; if (p2) await p2;
-    };
-    rbtn.onclick = async () => {
-        const turningOn = !edWordSelections.has(word);
-        const p1 = _toggleWordSel(word);
-        const p2 = turningOn && edWordApprovals.has(word) ? _toggleWordAppr(word) : null;
-        paint(); _btRescore(word);
-        await p1; if (p2) await p2;
-    };
-    row.append(wspan, gbtn, rbtn);
-    return row;
-}
+// Rows come from wsMakeRow (shared with Select Words); each ✓/✕ recounts here.
 function _btRescore(word) {
     for (const it of bt.items) if (it.found && it.found.has(word)) { _btScore(it); _btUpdateCardInfo(it); }
     if (bt.items.some(it => it.word === word)) _btUpdateWordRows();   // a ✕'d big word gets a warning
