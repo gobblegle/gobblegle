@@ -3,6 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+    // iPhone / iPad: Safari zooms in whenever a box with small text is tapped and
+    // stays zoomed. maximum-scale stops that; iOS still lets you pinch-zoom with
+    // it set. Only added on iOS, because on Android it would also block pinching
+    // (and Android doesn't zoom on tap anyway). Double-tap zoom is turned off for
+    // everyone in the styles (touch-action), which keeps pinch-zoom.
+    (function () {
+        var iOS = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);   // iPadOS reports as a Mac
+        if (iOS) document.querySelector('meta[name="viewport"]').setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0');
+    })();
+    </script>
     <title>Gobblegle — Board Editor</title>
     <style>
         :root {
@@ -36,6 +48,8 @@
             --exhausted-border: #3a2f27;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
+        /* Phones: no double-tap zoom anywhere on the page. Pinch-zoom and scrolling still work. */
+        html { touch-action: manipulation; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background: var(--bg); color: var(--text);
