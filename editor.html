@@ -245,11 +245,6 @@
             text-decoration: underline dotted; text-underline-offset: 3px; outline: none;
         }
         #word-forms-modal { z-index: 1100; }
-        .wf-group-head {
-            padding: 8px 18px 4px; border-bottom: 1px solid var(--border); background: var(--bg);
-            font-size: 0.72rem; font-weight: 700; color: var(--text-muted);
-            text-transform: uppercase; letter-spacing: 0.06em;
-        }
         .ws-row.wf-clicked { background: var(--bg); }
         .ws-row.wf-clicked .ws-word { color: var(--primary); }
         .wf-empty { padding: 16px 18px; font-size: 0.85rem; color: var(--text-muted); }
@@ -791,7 +786,7 @@
         </div>
         <div class="ws-body" id="wf-body"></div>
         <div class="ws-footer">
-            <span class="ws-footer-note">Only words in your dictionary are shown. Word forms from the English Speller Database © Kevin Atkinson · <a href="esdb/Copyright.txt" target="_blank" rel="noopener">copyright</a></span>
+            <span class="ws-footer-note">Only words in your dictionary are shown. A combined list made from Paul Nation's BNC/COCA word family lists v1.3.0 (<a href="nation/README.txt" target="_blank" rel="noopener">source</a>) and the English Speller Database © Kevin Atkinson (<a href="esdb/Copyright.txt" target="_blank" rel="noopener">copyright</a>).</span>
             <button class="btn" onclick="closeWordForms()">Done</button>
         </div>
     </div>
@@ -1852,14 +1847,24 @@ function wsMakeRow(word, { custom = false, onChange = null, link = true, clicked
 }
 
 // ── Word-forms popup ────────────────────────────────────────────────────────
-// esdb/scowl-pre.txt is the whole English Speller Database (Kevin Atkinson;
-// notice in esdb/Copyright.txt), unchanged. The first click on a word reads it
-// once and keeps, for each base word, the forms that are in the game
-// dictionary (all parts of speech merged: FIND noun + verb = FIND FINDS FOUND
-// FINDING). A word can be in several families (FOUND is in FIND's and in its
-// own); the popup shows all of them.
+// One combined list per word, built from two unchanged data sets that are read
+// once on the first click, keeping only words in the game dictionary:
+//  • nation/basewrd1-35.txt — Paul Nation's BNC/COCA word families, v1.3.0
+//    (nation/README.txt). Families include derived words: ASYMMETRIC →
+//    ASYMMETRICAL, ASYMMETRY; ADAPT → ADAPTABLE, ADAPTATION.
+//  • esdb/scowl-pre.txt — the English Speller Database (Kevin Atkinson; notice
+//    in esdb/Copyright.txt): spelling forms of each base word (all parts of
+//    speech merged: FIND noun + verb = FIND FINDS FOUND FINDING).
+// Any two families (from either list) that share a word are joined, all the
+// way, so every word sits in exactly one combined list and clicking any word in
+// it shows the same list: ABANDONMENTS (ESDB only) → the ABANDON family;
+// FOUND → FIND's family + FOUNDED, FOUNDER. Measured 2026-11-27: 51,427 words
+// have a list, biggest 26 words (CONNECT), none over 50.
 //
-// File layout: groups of lines split by blank lines, each line
+// Nation layout: the head word at the start of a line, its members on the
+// lines below indented with a tab; each word is followed by a count.
+//
+// ESDB layout: groups of lines split by blank lines, each line
 //   SIZES/SOURCES ': ' [VARIANT ': '] LEMMA [' <'POS'>'] [' {'NOTE'}'] [' ('USAGE')'] [': ' FORMS]
 // where LEMMA "-" repeats the group's word and FORMS look like
 // "pandas, panda's" or "(cacti | ~: cactus | ~: cactuses)".
@@ -1906,11 +1911,47 @@ function _wfParse(text, dict) {
     }
     return idx;
 }
+const _WF_NATION_FILES = Array.from({ length: 35 }, (_, i) => `basewrd${i + 1}.txt`);
+function _wfParseNation(texts, dict) {
+    const fams = [];          // each family: its words that are in the game dictionary
+    const add = fam => { if (fam) { const d = fam.filter(w => dict.has(w)); if (d.length > 1) fams.push(d); } };
+    for (const text of texts) {
+        let fam = null;
+        for (const line of text.split(/\r?\n/)) {
+            if (!line.trim()) continue;
+            const w = line.trim().split(/\s+/)[0].toUpperCase();
+            if (/^\s/.test(line) && fam) fam.push(w);
+            else { add(fam); fam = [w]; }
+        }
+        add(fam);
+    }
+    return fams;
+}
+// Join families that share a word (all the way). Returns word → its combined list, A–Z.
+function _wfCombine(fams) {
+    const parent = new Map();
+    const root = w => { while (parent.get(w) !== w) { parent.set(w, parent.get(parent.get(w))); w = parent.get(w); } return w; };
+    for (const f of fams) {
+        for (const w of f) if (!parent.has(w)) parent.set(w, w);
+        const r = root(f[0]);
+        for (const w of f) parent.set(root(w), r);
+    }
+    const lists = new Map(), idx = new Map();
+    for (const w of parent.keys()) { const r = root(w); let l = lists.get(r); if (!l) lists.set(r, l = []); l.push(w); }
+    for (const l of lists.values()) { l.sort(); for (const w of l) idx.set(w, l); }
+    return idx;
+}
 function _wfLoad() {
     if (_wfIndex) return Promise.resolve(_wfIndex);
-    if (!_wfLoading) _wfLoading = fetch('./esdb/scowl-pre.txt')
-        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-        .then(text => (_wfIndex = _wfParse(text, edDict)))
+    const get = url => fetch(url).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); });
+    if (!_wfLoading) _wfLoading = Promise.all([
+        get('./esdb/scowl-pre.txt'),
+        Promise.all(_WF_NATION_FILES.map(f => get('./nation/' + f))),
+    ])
+        .then(([esdb, nation]) => {
+            const esdbFams = new Set([..._wfParse(esdb, edDict).values()].flat());
+            return (_wfIndex = _wfCombine([...esdbFams, ..._wfParseNation(nation, edDict)]));
+        })
         .catch(e => { _wfLoading = null; throw e; });
     return _wfLoading;
 }
@@ -1920,30 +1961,23 @@ async function openWordForms(word, onChange) {
     document.getElementById('wf-title').textContent = `Forms of ${word}`;
     modal.classList.add('open');
     if (!edDict) { body.innerHTML = '<div class="wf-empty">The dictionary is still loading. Try again in a moment.</div>'; return; }
-    body.innerHTML = `<div class="wf-empty">${_wfIndex ? 'Loading…' : 'Reading the word forms list (the first time takes a few seconds)…'}</div>`;
+    body.innerHTML = `<div class="wf-empty">${_wfIndex ? 'Loading…' : 'Reading the word lists (the first time takes a few seconds)…'}</div>`;
     let idx;
     try { idx = await _wfLoad(); }
-    catch { if (_wfWord === word) body.innerHTML = '<div class="wf-empty">Couldn\'t load the word forms list. Check your connection, then try again.</div>'; return; }
+    catch { if (_wfWord === word) body.innerHTML = '<div class="wf-empty">Couldn\'t load the word lists. Check your connection, then try again.</div>'; return; }
     if (_wfWord !== word || !modal.classList.contains('open')) return;   // closed, or another word clicked
     // Never show a word that isn't in the dictionary this editor is using.
     const inDict = w => !edDict || edDict.has(w);
-    const groups = (idx.get(word) || []).map(f => Object.assign(f.filter(inDict), { base: f.base })).filter(f => f.length > 1);
+    const list = (idx.get(word) || []).filter(inDict);
     body.innerHTML = '';
-    if (!groups.length) {
+    if (list.length < 2) {
         const note = document.createElement('div'); note.className = 'wf-empty';
         note.textContent = `${word} has no other forms in your dictionary.`;
         body.append(note, wsMakeRow(word, { onChange: _wfOnChange, link: false, clicked: true }));
         return;
     }
     const frag = document.createDocumentFragment();
-    for (const [n, fam] of groups.entries()) {
-        if (groups.length > 1) {
-            const head = document.createElement('div'); head.className = 'wf-group-head';
-            head.textContent = fam.base ? `${fam.base} family` : `Family ${n + 1}`;
-            frag.appendChild(head);
-        }
-        for (const w of fam) frag.appendChild(wsMakeRow(w, { onChange: _wfOnChange, link: false, clicked: w === word }));
-    }
+    for (const w of list) frag.appendChild(wsMakeRow(w, { onChange: _wfOnChange, link: false, clicked: w === word }));
     body.appendChild(frag);
     body.scrollTop = 0;
 }

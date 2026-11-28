@@ -9,5 +9,7 @@ Copyright.txt is ESDB's copyright and permission notice, copied word for word
 from the Copyright file in the same repository. Keep it with scowl-pre.txt.
 
 The Gobblegle board editor (editor.html) reads scowl-pre.txt when you click a
-word in a word list, and shows that word's other forms, keeping only words that
-are in the game dictionary (in_all_three_333k.txt).
+word in a word list. It combines it with Paul Nation's word family lists
+(nation/): any two families that share a word, from either list, are joined
+into one list. The popup shows that combined list, keeping only words that are
+in the game dictionary (in_all_three_333k.txt), and credits both sources.
