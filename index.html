@@ -2487,7 +2487,22 @@ function setTimerSeconds(s) {
     timerRunSince = null;
     timerSeconds = Math.max(0, Math.floor(timerBaseMs / 1000));
 }
+// The clock only moves when the screen actually DRAWS the game, like Squaredle's rule
+// ("count while the puzzle is on screen") but without trusting the phone's word for it.
+// Some Android setups (a link opened inside a chat app's built-in browser, for one) keep
+// reporting the page as visible — and keep firing timers — long after the player left,
+// so a 1-minute visit followed by 2 hours away showed up as a 2-hour game. A browser
+// never draws frames for a page that isn't really on screen, so the 250ms interval only
+// ASKS for a frame and the clock advances inside that frame. While nothing is drawn the
+// request just waits; when the game is back on screen the first frame credits at most
+// TIMER_MAX_TICK_MS for the whole gap.
+let timerFrameReq = 0;   // pending requestAnimationFrame id (0 = none)
 function timerTick() {
+    if (!timerFrameReq) timerFrameReq = requestAnimationFrame(timerFrame);
+}
+function timerFrame() {
+    timerFrameReq = 0;
+    if (!timerInterval) return;   // clock was stopped while this frame was pending
     const prev = timerSeconds;
     syncTimerSeconds();
     if (timerSeconds === prev) return;
@@ -2502,6 +2517,7 @@ function startTimerInterval() {
 }
 function stopTimerInterval() {
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    if (timerFrameReq) { cancelAnimationFrame(timerFrameReq); timerFrameReq = 0; }
 }
 function startTimer() {
     // Already going? Treat the interaction as a resume request instead — see the
