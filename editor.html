@@ -159,6 +159,20 @@
         }
         .word-chips { display: flex; flex-wrap: wrap; gap: 4px 10px; }
         .word-chip  { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text); }
+        /* Click a word → its "Forms of" popup. */
+        .word-chip.wf-link { cursor: pointer; border-radius: 4px; padding: 1px 3px; margin: -1px -3px; }
+        .word-chip.wf-link:hover, .word-chip.wf-link:focus-visible { background: var(--cell-active); outline: none; }
+        .word-list-hint { font-size: 0.75rem; color: var(--text-muted); }
+        /* "i" beside a big word: opens the same "Forms of" popup, with ✓ / ✕ on every form. */
+        .wf-info {
+            flex: none; width: 24px; height: 24px; padding: 0; border-radius: 50%;
+            border: 1.5px solid var(--border); background: var(--surface); color: var(--text-muted);
+            font: italic 800 0.9rem/1 Georgia, 'Times New Roman', serif; cursor: pointer;
+            display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+        }
+        .wf-info:hover, .wf-info:focus-visible { color: var(--primary); border-color: var(--primary); outline: none; }
+        .wf-info.off { opacity: 0.35; cursor: default; color: var(--text-muted); border-color: var(--border); }
+        .wf-info.wf-sm { width: 21px; height: 21px; font-size: 0.8rem; margin-left: 4px; }
 
         /* ── Word-select modal ── */
         #word-select-modal, .ws-modal-shell {
@@ -366,20 +380,54 @@
         .bt-card.building .table-wrap { opacity: 0.5; pointer-events: none; }
         /* Wraps so a long big word keeps the whole line (the word count drops below it). */
         .bt-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-        .bt-card-head .bt-count { margin-left: auto; }
+        /* Right side of a board's title: "(13)" then the word count. Wraps as one piece. */
+        .bt-head-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
         .bt-num { font-size: 0.78rem; color: var(--text-muted); font-weight: 700; }
-        .bt-word { font-weight: 800; letter-spacing: 0.04em; color: var(--primary); flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; }
+        .bt-word { font-weight: 800; letter-spacing: 0.04em; color: var(--primary); flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; }
+        .bt-wline { display: flex; align-items: center; gap: 8px; }
+        .bt-words td.bt-info { display: none; }
         /* Typeable big word in a board's title: looks like the title, dashed underline says "you can type here". */
         .bt-word-input {
             font: inherit; letter-spacing: inherit; color: inherit; text-transform: uppercase;
             background: transparent; border: 1.5px solid transparent; border-bottom: 1.5px dashed var(--border);
             border-radius: 5px; padding: 1px 4px; margin-left: -5px; min-width: 3ch; max-width: 100%; outline: none;
+            flex: 0 1 auto;
         }
         .bt-word-input:hover { border-color: var(--border); }
         .bt-word-input:focus { border: 1.5px solid var(--primary); background: var(--surface); }
         /* Bright red letters: the typed word isn't in the dictionary. */
-        .bt-words input.field-input.bt-notword, .bt-card .bt-word-input.bt-notword { color: #e60000; }
-        body.dark .bt-words input.field-input.bt-notword, body.dark .bt-card .bt-word-input.bt-notword { color: #ff4d4d; }
+        #bb-seed-input.bt-notword, .bt-words input.field-input.bt-notword, .bt-card .bt-word-input.bt-notword { color: #e60000; }
+        body.dark #bb-seed-input.bt-notword, body.dark .bt-words input.field-input.bt-notword, body.dark .bt-card .bt-word-input.bt-notword { color: #ff4d4d; }
+        /* Black letters: the big word is already used (on the calendar, or twice in this batch).
+           In dark mode black wouldn't show, so it's the plain text colour there. */
+        #bb-seed-input { color: var(--primary); }
+        #bb-seed-input.bt-usedword, .bt-words input.field-input.bt-usedword, .bt-card .bt-word-input.bt-usedword { color: #000; }
+        body.dark #bb-seed-input.bt-usedword, body.dark .bt-words input.field-input.bt-usedword, body.dark .bt-card .bt-word-input.bt-usedword { color: var(--text); }
+        /* Another form of the word is already a big word: box colours flip (the
+           letter colour becomes the fill) and a red "!" pulses on the corner. */
+        .bt-alarm-wrap { position: relative; display: inline-flex; min-width: 0; max-width: 100%; vertical-align: middle; }
+        .bt-alarm-wrap > input { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+        .bt-alarm {
+            display: none; position: absolute; top: -8px; right: -6px; z-index: 1;
+            width: 19px; height: 19px; border-radius: 50%; background: #dc2626; color: #fff;
+            border: 2px solid var(--surface); font: 800 12px/15px -apple-system, "Segoe UI", sans-serif; text-align: center;
+            animation: bt-alarm-pulse 1.4s ease-in-out infinite; pointer-events: auto; cursor: help;
+        }
+        .bt-alarm-wrap.on .bt-alarm { display: block; }
+        @keyframes bt-alarm-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.18); } }
+        @media (prefers-reduced-motion: reduce) { .bt-alarm { animation: none; } }
+        #bb-seed-input.bt-famused, .bt-words input.field-input.bt-famused, .bt-card .bt-word-input.bt-famused,
+        .bt-card .bt-word-input.bt-famused:focus { background: var(--primary); color: #fff8f1; border-color: var(--primary); }
+        #bb-seed-input.bt-famused.bt-usedword, .bt-words input.field-input.bt-famused.bt-usedword, .bt-card .bt-word-input.bt-famused.bt-usedword { background: #000; color: #fff; border-color: #000; }
+        #bb-seed-input.bt-famused.bt-notword, .bt-words input.field-input.bt-famused.bt-notword, .bt-card .bt-word-input.bt-famused.bt-notword { background: #e60000; color: #fff; border-color: #e60000; }
+        body.dark #bb-seed-input.bt-famused, body.dark .bt-words input.field-input.bt-famused, body.dark .bt-card .bt-word-input.bt-famused { color: var(--bg); }
+        body.dark #bb-seed-input.bt-famused.bt-usedword, body.dark .bt-words input.field-input.bt-famused.bt-usedword, body.dark .bt-card .bt-word-input.bt-famused.bt-usedword { background: var(--text); border-color: var(--text); color: var(--bg); }
+        /* A word in a ✓ / ✕ list that's already been a big word: black box, white letters. */
+        .ws-row .ws-word.ws-used {
+            flex: 0 1 auto; margin-right: auto; margin-left: -6px; padding: 1px 6px; border-radius: 4px;
+            background: #000; color: #fff;
+        }
+        body.dark .ws-row .ws-word.ws-used { background: var(--text); color: var(--bg); }
         .bt-wlen { font-weight: 700; letter-spacing: 0; color: var(--text-muted); white-space: nowrap; }
         .bt-count { font-weight: 800; font-size: 0.82rem; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
         .bt-count.good { background: #dcfce7; color: #166534; }
@@ -437,7 +485,9 @@
             .bt-words td.bt-w { order: 1; flex: 1; min-width: 0; }
             .bt-words td.bt-btns { order: 1; }
             .bt-words input.field-input { min-width: 0; max-width: 100%; }
-            .bt-words td.bt-len { order: 3; width: auto; margin-left: 28px; margin-right: 4px; font-size: 0.78rem; }
+            .bt-words td.bt-info { display: block; order: 3; margin-left: 28px; padding: 0; }
+            .bt-wline .wf-info { display: none; }
+            .bt-words td.bt-len { order: 3; width: auto; margin-right: 4px; font-size: 0.78rem; }
             .bt-words td.bt-len::after { content: ' letters'; font-weight: 600; }
             .bt-words td.bt-fitcell {
                 order: 3; display: flex; align-items: center; gap: 3px; padding: 0;
@@ -448,6 +498,8 @@
             .bt-reroll { width: 32px; height: 32px; }
             .bt-reroll.bt-wback { margin-right: 3px; }
             .bt-reroll.bt-rm { margin-left: 3px; }
+            .wf-info { width: 28px; height: 28px; }
+            .wf-info.wf-sm { width: 24px; height: 24px; }
 
             /* Boards: a little more room so a 5-wide grid fits on a 360px phone.
                (Wider grids scroll sideways inside their own card; the page stays put.)
@@ -464,6 +516,9 @@
         @media (max-width: 340px) {
             .header-title img { height: 27px; }
             .editor-badge { font-size: 0.62rem; }
+            .bt-words td.bt-info { margin-left: 0; }
+            .bt-words td.bt-info .wf-info { width: 24px; height: 24px; }
+            .bt-words td.bt-len { margin-right: 0; }
         }
     </style>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
@@ -615,11 +670,15 @@
                 <button class="btn btn-sec" id="ed-back-btn" onclick="edBack()" disabled title="Undo the last New Word, Mixup, Generate Random, Fill Random or Clear">← Back</button>
             </div>
             <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px">
-                <label style="display:flex;align-items:center;gap:8px;font-size:0.82rem;font-weight:600;color:var(--text-muted)">
+                <!-- Box + "i" stay on one line; on a narrow phone the box gives up a little width. -->
+                <label style="display:flex;align-items:center;gap:8px;min-width:0;white-space:nowrap;font-size:0.82rem;font-weight:600;color:var(--text-muted)">
                     Big word
-                    <input type="text" id="bb-seed-input" class="field-input" style="width:190px;padding:7px 9px;text-transform:uppercase;font-weight:700;letter-spacing:0.04em;color:var(--primary)"
+                    <span class="bt-alarm-wrap" style="flex:0 1 190px;min-width:0">
+                    <input type="text" id="bb-seed-input" class="field-input" style="width:190px;min-width:0;padding:7px 9px;text-transform:uppercase;font-weight:700;letter-spacing:0.04em"
                            autocomplete="off" spellcheck="false" placeholder="type one, or New Word" oninput="bbSeedTyped()"
-                           onkeydown="if(event.key==='Enter'){event.preventDefault();bbMixup();}">
+                           onkeydown="if(event.key==='Enter'){event.preventDefault();bbMixup();}"><span class="bt-alarm" aria-hidden="true">!</span></span>
+                    <button type="button" class="wf-info off" id="bb-seed-info" style="margin-left:-2px" onclick="if (_bbSeed) openWordForms(_bbSeed, wfChanged)"
+                            title="See this word's other forms, and ✓ or ✕ them" aria-label="See the big word's other forms">i</button>
                 </label>
                 <span id="bb-seed-note" style="font-size:0.78rem;font-weight:600"></span>
             </div>
@@ -685,7 +744,7 @@
 
         <div class="card" id="bt-words-card">
             <div class="card-title">2 · Big words</div>
-            <div class="hint">Green means the big word fits on an empty grid that size. <b>↻</b> picks a different word, <b>←</b> goes back to the one before, or type your own.</div>
+            <div class="hint">Green means the big word fits on an empty grid that size. <b>↻</b> picks a different word, <b>←</b> goes back to the one before, or type your own. <b><i>i</i></b> shows the word's other forms to ✓ or ✕.</div>
             <div class="bt-words-wrap"><table class="bt-words" id="bt-words"></table></div>
             <div class="bt-row">
                 <button class="btn bt-act" id="bt-build-btn" onclick="btBuildAll()">Build boards</button>
@@ -696,7 +755,7 @@
 
         <div class="card" id="bt-boards-card">
             <div class="card-title">3 · Boards <span class="bt-section-note" id="bt-ok-count"></span></div>
-            <div class="hint">Type letters, <b>-</b> to block a tile, or a space to clear one. Use <b>+</b> and <b>×</b> around a grid to add or remove rows and columns. Tap a board's big word to type a different one (<b style="color:#e60000">red</b> = not in the dictionary). Tick <b>OK</b> on each board you're happy with. Only OK boards get pushed.</div>
+            <div class="hint">Type letters, <b>-</b> to block a tile, or a space to clear one. Use <b>+</b> and <b>×</b> around a grid to add or remove rows and columns. Tap a board's big word to type a different one (<b style="color:#e60000">red</b> = not in the dictionary, <b>black</b> = already used). <b><i>i</i></b> shows its other forms. Tick <b>OK</b> on each board you're happy with. Only OK boards get pushed.</div>
             <div class="status" id="bt-boards-status"></div>
             <div class="bt-boards" id="bt-boards"></div>
         </div>
@@ -1809,18 +1868,37 @@ function wsToggle(word, kind) {
 }
 function _wsPaintRow(row) {
     const w = row.dataset.word;
-    row.querySelector('.ws-btn-green').classList.toggle('active', edWordApprovals.has(w));
-    row.querySelector('.ws-btn-red').classList.toggle('active', edWordSelections.has(w));
+    row.querySelector('.ws-btn-green')?.classList.toggle('active', edWordApprovals.has(w));
+    row.querySelector('.ws-btn-red')?.classList.toggle('active', edWordSelections.has(w));
+    _wsMarkUsed(row);
 }
+// Which big words count as "used" for a list: 'batch' = the batch's track (any
+// saved date); 'one' = the One-board track, not counting the date being edited.
+function _wsCtxNow() { return document.body.classList.contains('batch-view') && bt ? 'batch' : 'one'; }
+function _wsUsedOn(word, ctx) {
+    return ctx === 'batch' ? (bt ? _usedDate(bt.track, word) : null) : _usedDate(_bbTrack(), word, edSelectedDate);
+}
+// A word that's already been a big word: black box, white letters (+ the date on hover).
+function _wsMarkUsed(row) {
+    const span = row.querySelector('.ws-word'), w = row.dataset.word;
+    if (!span || !w) return;
+    if (span.dataset.baseTitle === undefined) span.dataset.baseTitle = span.title || '';
+    const on = _wsUsedOn(w, row.dataset.ctx || 'one');
+    span.classList.toggle('ws-used', !!on);
+    const base = span.dataset.baseTitle;
+    span.title = on ? `Already the big word on ${on}` + (base ? `. ${base}` : '') : base;
+}
+function _wsRepaintUsed() { document.querySelectorAll('.ws-row[data-word]').forEach(_wsMarkUsed); }
 function wsPaintWord(word) {
     document.querySelectorAll(`.ws-row[data-word="${CSS.escape(word)}"]`).forEach(_wsPaintRow);
 }
 // One word row: the word (click → its other forms), ✓ and ✕.
 // onChange(word) runs after each toggle (Batch uses it to recount boards).
-function wsMakeRow(word, { custom = false, onChange = null, link = true, clicked = false } = {}) {
+function wsMakeRow(word, { custom = false, onChange = null, link = true, clicked = false, ctx = null } = {}) {
     const row = document.createElement('div');
     row.className = 'ws-row' + (clicked ? ' wf-clicked' : '');
     row.dataset.word = word;
+    row.dataset.ctx = ctx || _wsCtxNow();
     const wspan = document.createElement('span');
     wspan.className = 'ws-word' + (custom ? ' is-custom' : '') + (link ? ' ws-link' : '');
     wspan.textContent = word;
@@ -1985,6 +2063,19 @@ function closeWordForms() {
     _wfWord = null;
     document.getElementById('word-forms-modal').classList.remove('open');
 }
+// After a ✓ / ✕ in the popup opened from a big word or the One-board word list:
+// recount the batch boards (which also recounts the One-board puzzle).
+function wfChanged(word) { if (bt) _btRescore(word); else scheduleWordCount(); }
+// The round "i" beside a big word. getWord() is read on click, so it opens the
+// word that's in the box right then.
+function wfInfoBtn(getWord, small = false) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'wf-info' + (small ? ' wf-sm' : ''); b.textContent = 'i';
+    b.title = "See this word's other forms, and ✓ or ✕ them";
+    b.setAttribute('aria-label', "See this big word's other forms");
+    b.onclick = () => { const w = getWord(); if (w) openWordForms(w, wfChanged); };
+    return b;
+}
 document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && document.getElementById('word-forms-modal').classList.contains('open')) closeWordForms();
 });
@@ -2100,6 +2191,8 @@ function renderDictEditList() {
         };
 
         row.appendChild(wspan); row.appendChild(gbtn); row.appendChild(rbtn);
+        row.dataset.word = word; row.dataset.ctx = 'one';
+        _wsMarkUsed(row);   // black box if it's already been a big word
         body.appendChild(row);
     }
 }
@@ -2212,6 +2305,8 @@ function renderPuzzleCustomList() {
         };
 
         row.appendChild(wspan); row.appendChild(gbtn); row.appendChild(rbtn);
+        row.dataset.word = word; row.dataset.ctx = 'one';
+        _wsMarkUsed(row);   // black box if it's already been a big word
         body.appendChild(row);
     }
 }
@@ -2423,6 +2518,9 @@ function updateWordCount() {
     renderWordList();
     _edUpdateUnusedTiles();
     _bbRenderSeed();   // flag the big word if hand edits broke it
+    // Signed in: start reading the word-family lists now, so the related-word
+    // "!" is ready by the time a big word is typed.
+    if (document.body.classList.contains('ed-unlocked')) _wfWarm();
 }
 
 function renderWordList() {
@@ -2437,6 +2535,9 @@ function renderWordList() {
     const groups = {};
     for (const w of _edCurrentWords) (groups[w.length] = groups[w.length] || []).push(w);
     container.innerHTML = '';
+    const hint = document.createElement('div'); hint.className = 'word-list-hint';
+    hint.textContent = 'Click a word to see its other forms, and ✓ or ✕ them.';
+    container.appendChild(hint);
     Object.keys(groups).sort((a,b) => +a - +b).forEach(len => {
         const wList = groups[len].sort();
         const sec = document.createElement('div');
@@ -2447,8 +2548,9 @@ function renderWordList() {
         const chips = document.createElement('div'); chips.className = 'word-chips';
         wList.forEach(w => {
             const c = document.createElement('span');
-            c.className = 'word-chip' + (_isCustomWord(w) ? ' is-custom' : '');
-            c.textContent = w;
+            c.className = 'word-chip wf-link' + (_isCustomWord(w) ? ' is-custom' : '');
+            c.textContent = w; c.dataset.word = w;
+            c.tabIndex = 0; c.setAttribute('role', 'button'); c.title = `See the other forms of ${w}`;
             // Strike + mute anything not in the saved puzzle (excluded or removed here).
             if (!_isCustomWord(w) && !_edPuzzleHas(w)) {
                 c.style.color = 'var(--error)';
@@ -2461,6 +2563,15 @@ function renderWordList() {
     });
     container.style.display = '';
 }
+
+// Words in the list open their "Forms of" popup (one listener for every chip).
+(() => {
+    const box = document.getElementById('word-list-container');
+    if (!box) return;
+    const open = e => { const c = e.target.closest('.word-chip[data-word]'); if (c) openWordForms(c.dataset.word, wfChanged); };
+    box.addEventListener('click', open);
+    box.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('.word-chip[data-word]')) { e.preventDefault(); open(e); } });
+})();
 
 function showStatus(msg, type) {
     const el = document.getElementById('status');
@@ -3065,12 +3176,71 @@ function bbSeedTyped() {
     _bbRenderSeed();
 }
 
-// Another saved date (this track) that already uses `word` as its big word.
-function _bbUsedOn(word) {
-    const e = _bbUsed[_bbTrack()];
-    if (!e) return null;
-    for (const [date, w] of e.map) if (w === word && date !== edSelectedDate) return date;
+// A saved date of `track` whose big word is `word` (skipping `exceptDate`), or null.
+function _usedDate(track, word, exceptDate = null) {
+    const dates = _bbUsed[track]?.byWord?.get(word);
+    if (dates) for (const d of dates) if (d !== exceptDate) return d;
     return null;
+}
+// Another saved date (this track) that already uses `word` as its big word.
+function _bbUsedOn(word) { return _usedDate(_bbTrack(), word, edSelectedDate); }
+
+// The used list for a track changed (first load, or someone saved): repaint
+// everything that colours words by it.
+function _usedChanged(track) {
+    _wsRepaintUsed();
+    if (track === _bbTrack()) _bbRenderSeed();
+    if (bt && bt.track === track) _btUpdateWordRows();
+}
+
+// ── Related words ("Forms of" family) already used as a big word ────────────
+// Needs the word-family lists, so they're read as soon as a big word is shown
+// (in the background), instead of on the first popup click.
+let _wfWarmFailedAt = 0;
+function _wfWarm() {
+    if (_wfIndex || _wfLoading || !edDict || Date.now() - _wfWarmFailedAt < 60000) return;
+    _wfLoad().then(() => { _bbRenderSeed(); if (bt) _btUpdateWordRows(); })
+        .catch(() => { _wfWarmFailedAt = Date.now(); });
+}
+// Another form of `word` that's already a big word: { word, where } where `where`
+// is a date of `track` (not `exceptDate`), or 'batch' = another puzzle in this
+// batch (only when batchSelfId is given). Null if none, or the lists aren't read yet.
+function _wfFamilyUsed(word, track, { exceptDate = null, batchSelfId } = {}) {
+    if (!word) return null;
+    if (!_wfIndex) { _wfWarm(); return null; }
+    const fam = _wfIndex.get(word);
+    if (!fam) return null;
+    for (const w of fam) {
+        if (w === word) continue;
+        const d = _usedDate(track, w, exceptDate);
+        if (d) return { word: w, where: d };
+    }
+    if (batchSelfId !== undefined && bt) for (const w of fam) {
+        if (w !== word && bt.items.some(o => String(o.id) !== String(batchSelfId) && o.word === w)) return { word: w, where: 'batch' };
+    }
+    return null;
+}
+function _wfFamilyText(f) {
+    return f.where === 'batch' ? `${f.word} (a form of this word) is another puzzle in this batch`
+                               : `${f.word} (a form of this word) is already the big word on ${f.where}`;
+}
+// Flip a big word box's colours and show the red "!" on its corner.
+function _markFamily(inp, f) {
+    inp.classList.toggle('bt-famused', !!f);
+    const wrap = inp.closest('.bt-alarm-wrap');
+    if (wrap) {
+        wrap.classList.toggle('on', !!f);
+        const a = wrap.querySelector('.bt-alarm');
+        if (a) a.title = f ? _wfFamilyText(f) : '';
+    }
+}
+// Put a big word box inside a wrapper that carries the red "!".
+function _alarmWrap(inp) {
+    const wrap = document.createElement('span'); wrap.className = 'bt-alarm-wrap';
+    const a = document.createElement('span'); a.className = 'bt-alarm'; a.textContent = '!';
+    a.setAttribute('aria-hidden', 'true');
+    wrap.append(inp, a);
+    return wrap;
 }
 
 // Keep the box showing the big word, with any warnings beside it.
@@ -3078,11 +3248,22 @@ function _bbRenderSeed() {
     const inp = document.getElementById('bb-seed-input'), note = document.getElementById('bb-seed-note');
     if (!inp || !note) return;
     if (document.activeElement !== inp && inp.value.toUpperCase() !== (_bbSeed || '')) inp.value = _bbSeed || '';
+    // Letters: bright red = not in the dictionary, black = already another date's
+    // big word (red wins if both). Same as the Batch tab's boxes.
+    if (db && !_bbUsed[_bbTrack()]) _bbWatchUsed(_bbTrack()).then(_bbRenderSeed).catch(() => {});
+    const usedOn = _bbSeed ? _bbUsedOn(_bbSeed) : null;
+    const notWord = !!_bbSeed && !_btIsWord(_bbSeed);
+    inp.classList.toggle('bt-notword', notWord);
+    inp.classList.toggle('bt-usedword', !!usedOn && !notWord);
+    // Another form of the word already used: colours flip + red "!".
+    const fam = _bbSeed ? _wfFamilyUsed(_bbSeed, _bbTrack(), { exceptDate: edSelectedDate }) : null;
+    _markFamily(inp, fam);
+    document.getElementById('bb-seed-info')?.classList.toggle('off', !_bbSeed);
     if (!_bbSeed) { note.textContent = ''; return; }
     const msgs = [];
-    if (edDict && !edDict.has(_bbSeed) && !edWordApprovals.has(_bbSeed)) msgs.push('not in the dictionary, so players can’t score it');
+    if (fam) msgs.push(_wfFamilyText(fam));
+    if (notWord) msgs.push('not in the dictionary, so players can’t score it');
     else if (edWordSelections.has(_bbSeed)) msgs.push('crossed out in the dictionary, so players can’t score it');
-    const usedOn = _bbUsedOn(_bbSeed);
     if (usedOn) msgs.push(`already the big word on ${usedOn}`);
     const { cells } = readCells();
     if (!edCanSpell(_bbSeed, cells, editorRows, editorCols)) msgs.push('not on the board yet: press Mixup to build around it');
@@ -3102,19 +3283,24 @@ function _bbWatchUsed(track) {
     if (!db) return Promise.resolve();
     if (_bbUsed[track]) return _bbUsed[track].ready;
     // dates: every date that has a saved board (the batch page skips these).
-    const entry = { map: new Map(), dates: new Set(), ready: null };
+    // byWord: big word → the dates it's on.
+    const entry = { map: new Map(), byWord: new Map(), dates: new Set(), ready: null };
     const ref = db.ref(track === 'mini' ? 'dailyMiniBoards' : 'dailyBoards');
     entry.ready = new Promise((resolve, reject) => {
         ref.on('value', snap => {
-            const m = new Map();
+            const m = new Map(), byWord = new Map();
             const val = snap.val() || {};
             for (const date of Object.keys(val)) {
                 const w = val[date] && val[date].seedWord;
-                if (typeof w === 'string' && w) m.set(date, w);
+                if (typeof w === 'string' && w) {
+                    m.set(date, w);
+                    let a = byWord.get(w); if (!a) byWord.set(w, a = []); a.push(date);
+                }
             }
-            entry.map = m;
+            entry.map = m; entry.byWord = byWord;
             entry.dates = new Set(Object.keys(val));
             resolve();
+            _usedChanged(track);
         }, err => { delete _bbUsed[track]; reject(err); });
     });
     _bbUsed[track] = entry;
@@ -3446,6 +3632,7 @@ async function btInit() {
     bt = _btLoad();
     btRenderAll();
     await new Promise(res => { const tick = () => edDict ? res() : setTimeout(tick, 200); tick(); });
+    _wfWarm();   // word-family lists, for the related-word "!" on big words
     for (const it of bt.items) if (it.cells) _btEval(it);
     btRenderAll();
     _btComputeFits();
@@ -3486,10 +3673,23 @@ function _btSetBusy(on) {
 // dictionary has loaded, every word counts as fine.)
 function _btIsWord(w) { return !edDict || edDict.has(w) || edWordApprovals.has(w); }
 function _btCleanWord(v) { return String(v).replace(/[^a-z]/gi, '').toUpperCase(); }
-// Bright red letters while the word in a box isn't in the dictionary.
+// Where a big word is already used: a saved date of this track, 'batch' (another
+// puzzle in this batch has it), or null.
+function _btUsedWhere(w, selfId) {
+    const u = _bbUsed[bt.track];
+    if (u) for (const [date, sw] of u.map) if (sw === w) return date;
+    if (bt.items.some(o => String(o.id) !== String(selfId) && o.word === w)) return 'batch';
+    return null;
+}
+// Letters in a big word box: bright red = not in the dictionary,
+// black = already used (red wins if both).
 function _btMarkWord(inp) {
-    const w = _btCleanWord(inp.value);
-    inp.classList.toggle('bt-notword', !!w && !_btIsWord(w));
+    const w = _btCleanWord(inp.value), notWord = !!w && !_btIsWord(w);
+    const id = inp.closest('[data-id]')?.dataset.id;
+    inp.classList.toggle('bt-notword', notWord);
+    inp.classList.toggle('bt-usedword', !!w && !notWord && !!_btUsedWhere(w, id));
+    // Another form of it already used: colours flip + red "!".
+    _markFamily(inp, w && !notWord ? _wfFamilyUsed(w, bt.track, { batchSelfId: id }) : null);
 }
 // Put a board's title back to its current word (after a typed word wasn't used).
 function _btResetTitle(it) {
@@ -3670,6 +3870,8 @@ function _btWordWarnings(it) {
     const u = _bbUsed[bt.track];
     if (u) for (const [date, sw] of u.map) if (sw === w) { out.push(`already the big word on ${date}`); break; }
     if (bt.items.some(o => o !== it && o.word === w)) out.push('used twice in this batch');
+    const f = _wfFamilyUsed(w, bt.track, { batchSelfId: it.id });
+    if (f) out.push(_wfFamilyText(f));
     return out;
 }
 // Full redraw of the table: only when rows are added / removed / reset.
@@ -3698,8 +3900,15 @@ function btRenderWords() {
         const len = document.createElement('td'); len.className = 'bt-len';
         inp.oninput = () => { len.textContent = _btCleanWord(inp.value).length; _btMarkWord(inp); _btSizeWordInputs(); };
         inp.onchange = () => btTypeWord(it.id, inp.value);
-        wtd.appendChild(inp);
-        tr.append(n, wtd, len);
+        // "i" right after the box on a computer; on a phone a second "i" starts
+        // line 2 instead (so it never squeezes the word). Each hides on the other.
+        const getW = () => _btCleanWord(inp.value) || it.word;
+        const line = document.createElement('div'); line.className = 'bt-wline';
+        line.append(_alarmWrap(inp), wfInfoBtn(getW));
+        wtd.appendChild(line);
+        const itd = document.createElement('td'); itd.className = 'bt-info';
+        itd.appendChild(wfInfoBtn(getW));
+        tr.append(n, wtd, itd, len);
         BT_SIZES.forEach(([R, C]) => {
             const td = document.createElement('td'), s = document.createElement('span');
             td.className = 'bt-fitcell'; td.dataset.size = `${R}×${C}`;   // label shown beside the mark on phones
@@ -3733,11 +3942,13 @@ function _btUpdateWordRows() {
         const warn = _btWordWarnings(it);
         let note = tr.querySelector('.bt-wnote');
         if (warn.length) {
-            if (!note) { note = document.createElement('span'); note.className = 'bt-wnote'; inp.after(note); }
+            if (!note) { note = document.createElement('span'); note.className = 'bt-wnote'; (inp.closest('.bt-wline') || inp).after(note); }
             note.textContent = warn.join(' · ');
         } else note?.remove();
         const f = _btFitCache.get(it.word);
         tr.querySelectorAll('.bt-fit').forEach((el, k) => _btFitEl(el, f ? f[k] : null));
+        // A change in one row can make another puzzle's word a repeat (or not), so its board title too.
+        _btUpdateCardInfo(it);
     }
     _btSizeWordInputs();
 }
@@ -4063,15 +4274,18 @@ function _btCardEl(it) {
     winp.setAttribute('aria-label', 'Big word for this board (type a different one to change it)');
     winp.title = 'Type a different big word, then press Enter';
     const wlen = document.createElement('span'); wlen.className = 'bt-wlen';
-    winp.oninput = () => { wlen.textContent = ` (${_btCleanWord(winp.value).length})`; _btMarkWord(winp); _btFitTitle(winp); };
+    winp.oninput = () => { wlen.textContent = `(${_btCleanWord(winp.value).length})`; _btMarkWord(winp); _btFitTitle(winp); };
     winp.onkeydown = e => {
         if (e.key === 'Enter') { e.preventDefault(); winp.blur(); }
         else if (e.key === 'Escape') { winp.value = it.word; winp.oninput(); winp.blur(); }
     };
     winp.onchange = () => btTypeWord(it.id, winp.value);
-    word.append(winp, wlen);
+    // "#1 WORD (i) ........ (13) [41 words]": the letter count sits beside the word count.
+    word.append(_alarmWrap(winp), wfInfoBtn(() => _btCleanWord(winp.value) || it.word));
     const cnt = document.createElement('span'); cnt.className = 'bt-count';
-    head.append(num, word, cnt);
+    const right = document.createElement('span'); right.className = 'bt-head-right';
+    right.append(wlen, cnt);
+    head.append(num, word, right);
     const note = document.createElement('div'); note.className = 'bt-card-note';
     const wrap = document.createElement('div'); wrap.className = 'table-wrap';
     wrap.appendChild(_btGridFrame(it));
@@ -4171,7 +4385,7 @@ function _btUpdateCardInfo(it, el) {
     const winp = el.querySelector('.bt-word-input');
     if (document.activeElement !== winp) {
         if (winp.value !== it.word) winp.value = it.word;
-        el.querySelector('.bt-wlen').textContent = ` (${it.word.length})`;
+        el.querySelector('.bt-wlen').textContent = `(${it.word.length})`;
         _btMarkWord(winp); _btFitTitle(winp);
     }
     const cnt = el.querySelector('.bt-count'), ev = it.ev, cntR = _bbParseRange(bt.range);
@@ -4180,6 +4394,10 @@ function _btUpdateCardInfo(it, el) {
     else { cnt.className = 'bt-count ' + (inRange ? 'good' : 'bad'); cnt.textContent = `${ev.count} word${_btS(ev.count)}`; }
     const parts = [];   // [text, isError]
     if (!_btIsWord(it.word)) parts.push([`${it.word} isn't in the dictionary, so players can't score it.`, true]);
+    const usedAt = _btUsedWhere(it.word, it.id);
+    if (usedAt) parts.push([usedAt === 'batch' ? `${it.word} is used twice in this batch.` : `${it.word} is already the big word on ${usedAt}.`, true]);
+    const fam = _wfFamilyUsed(it.word, bt.track, { batchSelfId: it.id });
+    if (fam) parts.push([_wfFamilyText(fam) + '.', true]);
     if (it.state === 'nofit') parts.push([`${it.word} doesn't fit yet. Add a row or column with the + buttons, then press Mixup. Or press New Word.`, true]);
     else if (ev && ev.hasAny) {
         if (!ev.connected) parts.push(["Letters aren't all connected.", true]);
@@ -4217,7 +4435,7 @@ function btRenderReview() {
     const top = body.scrollTop;
     body.innerHTML = '';
     const frag = document.createDocumentFragment();
-    for (const w of _btReviewWords) frag.appendChild(wsMakeRow(w, { onChange: _btRescore }));
+    for (const w of _btReviewWords) frag.appendChild(wsMakeRow(w, { onChange: _btRescore, ctx: 'batch' }));
     body.appendChild(frag);
     body.scrollTop = top;
     _btReviewSummary();
@@ -4289,7 +4507,8 @@ function btRenderPush() {
         const ds = targets[i];
         const row = document.createElement('div'); row.className = 'bt-date-row';
         const d = document.createElement('span'); d.className = 'bt-date'; d.textContent = ds ? _btFmtDate(ds) : '—';
-        const w = document.createElement('span'); w.className = 'bt-date-word'; w.textContent = `${_btNum(it)} ${it.word}`;
+        const w = document.createElement('span'); w.className = 'bt-date-word';
+        w.append(`${_btNum(it)} ${it.word}`, wfInfoBtn(() => it.word, true));
         const c = document.createElement('span'); c.className = 'bt-section-note'; c.textContent = it.ev && it.ev.hasAny ? `${it.ev.count} words` : '';
         row.append(d, w, c);
         if (ds === today || (ds && ds < today)) {
